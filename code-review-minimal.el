@@ -34,6 +34,8 @@
 ;;   - GitHub   : Personal Access Token via Authorization Bearer header
 ;;   - GitLab   : Personal Access Token via PRIVATE-TOKEN header
 ;;   - Gongfeng : Private token via PRIVATE-TOKEN header
+;;
+;; License: MIT
 
 ;;; Code:
 

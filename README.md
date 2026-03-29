@@ -1,4 +1,6 @@
-# code-review-minimal
+# code-review-minimal (WIP)
+
+NOTE: this is not fully implemented yet.
 
 A lightweight Emacs minor mode for performing code review directly inside Emacs against GitHub Pull Requests, GitLab Merge Requests, and Gongfeng (Tencent GitLab) MRs.
 

@@ -19,7 +19,7 @@
 ;;        machine code.tencent.com login ^crm password <gongfeng-token>
 ;;      The `^crm' login distinguishes these entries from tokens used by other
 ;;      Emacs forge tools (e.g. Magit/ghub use `^').
-;;      The host is taken from `code-review-minimal-*-base-url', so GitHub
+;;      The host is taken from `code-review-minimal-*-api-url', so GitHub
 ;;      Enterprise and self-hosted GitLab instances work automatically by
 ;;      setting the appropriate base-URL custom variable.
 ;;
@@ -68,7 +68,7 @@
 ;;
 ;; To add a new backend without modifying this file, push an entry to
 ;; `code-review-minimal-backend-registry' from your Emacs init or package:
-;;   (push '(mybackend :base-url-var my-base-url ...) code-review-minimal-backend-registry)
+;;   (push '(mybackend :api-url-var my-api-url ...) code-review-minimal-backend-registry)
 ;; or use the convenience wrapper `code-review-minimal-register-backend'.
 
 ;;;; ── Configuration ──
@@ -104,19 +104,19 @@ confirmation when the value is a registered backend symbol."
      (lambda (v) (or (null v)
                      (assq v code-review-minimal-backend-registry))))
 
-(defcustom code-review-minimal-github-base-url "https://api.github.com"
+(defcustom code-review-minimal-github-api-url "https://api.github.com"
   "Base URL for GitHub API.
 For GitHub Enterprise, use: https://your-github-enterprise.com/api/v3"
   :type 'string
   :group 'code-review-minimal)
 
-(defcustom code-review-minimal-gitlab-base-url "https://gitlab.com/api/v4"
+(defcustom code-review-minimal-gitlab-api-url "https://gitlab.com/api/v4"
   "Base URL for GitLab API.
 For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
   :type 'string
   :group 'code-review-minimal)
 
-(defcustom code-review-minimal-gongfeng-base-url "https://git.woa.com/api/v3"
+(defcustom code-review-minimal-gongfeng-api-url "https://git.woa.com/api/v3"
   "Base URL for Gongfeng API."
   :type 'string
   :group 'code-review-minimal)
@@ -127,7 +127,7 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
 ;;
 ;; Each entry: (BACKEND-SYMBOL PLIST) where PLIST contains:
 ;;
-;;   :base-url-var  Symbol of the `defcustom' holding the API base URL.
+;;   :api-url-var  Symbol of the `defcustom' holding the API base URL.
 ;;                  Add a matching defcustom in the Configuration section above.
 ;;   :remote-re     Regexp matched against the git remote URL for auto-detection.
 ;;                  Entries are tested in order; put more-specific patterns first.
@@ -162,33 +162,33 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
 ;;   2. In your Emacs init (after this package is loaded), call:
 ;;        (code-review-minimal-register-backend
 ;;          'foo
-;;          :base-url-var  'my-foo-base-url
+;;          :api-url-var  'my-foo-api-url
 ;;          :remote-re     "myfoo\\.example\\.com"
 ;;          :fetch         #'my--foo-fetch-comments
 ;;          :post          #'my--foo-post-comment
 ;;          :update        #'my--foo-update-comment
 ;;          :resolve       #'my--foo-resolve-comment)
 ;;      or push directly:
-;;        (push '(foo :base-url-var ...) code-review-minimal-backend-registry)
+;;        (push '(foo :api-url-var ...) code-review-minimal-backend-registry)
 ;;   Detection, token lookup, and dispatch are all driven by this table.
 
 (defvar code-review-minimal-backend-registry
   '((gongfeng
-     :base-url-var  code-review-minimal-gongfeng-base-url
+     :api-url-var  code-review-minimal-gongfeng-api-url
      :remote-re     "git\\.woa\\.com\\|code\\.tencent\\.com"
      :fetch         code-review-minimal--gongfeng-fetch-comments
      :post          code-review-minimal--gongfeng-post-comment
      :update        code-review-minimal--gongfeng-update-comment
      :resolve       code-review-minimal--gongfeng-resolve-comment)
     (github
-     :base-url-var  code-review-minimal-github-base-url
+     :api-url-var  code-review-minimal-github-api-url
      :remote-re     "github"
      :fetch         code-review-minimal--github-fetch-comments
      :post          code-review-minimal--github-post-comment
      :update        code-review-minimal--github-update-comment
      :resolve       code-review-minimal--github-resolve-comment)
     (gitlab
-     :base-url-var  code-review-minimal-gitlab-base-url
+     :api-url-var  code-review-minimal-gitlab-api-url
      :remote-re     "gitlab"
      :fetch         code-review-minimal--gitlab-fetch-comments
      :post          code-review-minimal--gitlab-post-comment
@@ -207,7 +207,7 @@ directly to this variable before or after loading the package.")
   "Register BACKEND with its configuration PLIST in the backend registry.
 BACKEND is a symbol (e.g. `myfoo').  PLIST must supply:
 
-  :base-url-var  — symbol of the defcustom holding the API base URL
+  :api-url-var  — symbol of the defcustom holding the API base URL
   :remote-re     — regexp for auto-detecting this backend from a remote URL
   :fetch         — function (callback) fetching threads and passing them to callback
   :post          — function (beg end body on-success) posting a new comment
@@ -226,7 +226,7 @@ Example (in your init file, after loading code-review-minimal):
 
   (code-review-minimal-register-backend
     \\='myfoo
-    :base-url-var  \\='my-foo-base-url
+    :api-url-var  \\='my-foo-api-url
     :remote-re     \"myfoo\\\\.example\\\\.com\"
     :fetch         #\\='my--foo-fetch-comments
     :post          #\\='my--foo-post-comment
@@ -308,11 +308,11 @@ Searches in order:
   "Return the hostname for BACKEND, derived from its base-URL defcustom."
   (replace-regexp-in-string
    "^https?://\\([^/]+\\).*" "\\1"
-   (symbol-value (code-review-minimal--backend-prop backend :base-url-var))))
+   (symbol-value (code-review-minimal--backend-prop backend :api-url-var))))
 
 (defun code-review-minimal--get-token (backend)
   "Get the authentication token for BACKEND from authinfo/netrc.
-The host is derived from the backend's :base-url-var registry entry."
+The host is derived from the backend's :api-url-var registry entry."
   (code-review-minimal--authinfo-token
    (code-review-minimal--backend-host backend)
    backend))

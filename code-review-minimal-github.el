@@ -13,7 +13,7 @@
 ;;   Tokens are read exclusively from authinfo/netrc.  Add an entry to
 ;;   ~/.authinfo (or ~/.authinfo.gpg):
 ;;     machine api.github.com login ^crm password <token>
-;;   For GitHub Enterprise, use the host from `code-review-minimal-github-base-url'.
+;;   For GitHub Enterprise, use the host from `code-review-minimal-github-api-url'.
 ;;
 ;; HTTP layer: ghub (`ghub-request'), Authorization: Bearer header.
 ;;
@@ -35,7 +35,7 @@
 (defvar code-review-minimal--project-info)
 (defvar code-review-minimal--mr-iid)
 (defvar code-review-minimal--mr-id)
-(defvar code-review-minimal-github-base-url)
+(defvar code-review-minimal-github-api-url)
 (declare-function code-review-minimal--git-remote-url            "code-review-minimal")
 (declare-function code-review-minimal--get-token                 "code-review-minimal")
 (declare-function code-review-minimal--assert-token              "code-review-minimal")
@@ -68,7 +68,7 @@
 
 (defun code-review-minimal--github-api-url (&rest path-segments)
   "Build a full GitHub API URL by joining PATH-SEGMENTS onto the base URL."
-  (concat code-review-minimal-github-base-url
+  (concat code-review-minimal-github-api-url
           "/" (mapconcat #'identity path-segments "/")))
 
 (defun code-review-minimal--github-http-request (method url &optional payload callback)
@@ -77,8 +77,8 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
   (code-review-minimal--assert-token 'github)
   (let* ((token    (code-review-minimal--get-token 'github))
          (host     (replace-regexp-in-string "^https?://" ""
-                                             code-review-minimal-github-base-url))
-         (resource (substring url (length code-review-minimal-github-base-url)))
+                                             code-review-minimal-github-api-url))
+         (resource (substring url (length code-review-minimal-github-api-url)))
          (wrapped-callback
           (when callback
             (lambda (result _headers _status _req)

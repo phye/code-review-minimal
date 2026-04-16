@@ -13,7 +13,7 @@
 ;;   Tokens are read exclusively from authinfo/netrc.  Add an entry to
 ;;   ~/.authinfo (or ~/.authinfo.gpg):
 ;;     machine gitlab.com login ^crm password <token>
-;;   For self-hosted instances, use the host from `code-review-minimal-gitlab-base-url'.
+;;   For self-hosted instances, use the host from `code-review-minimal-gitlab-api-url'.
 ;;
 ;; HTTP layer: ghub (`ghub-request' with :forge 'gitlab), PRIVATE-TOKEN header.
 ;;
@@ -37,7 +37,7 @@
 (defvar code-review-minimal--project-info)
 (defvar code-review-minimal--mr-iid)
 (defvar code-review-minimal--mr-id)
-(defvar code-review-minimal-gitlab-base-url)
+(defvar code-review-minimal-gitlab-api-url)
 (declare-function code-review-minimal--git-remote-url            "code-review-minimal")
 (declare-function code-review-minimal--get-token                 "code-review-minimal")
 (declare-function code-review-minimal--assert-token              "code-review-minimal")
@@ -64,7 +64,7 @@
 
 (defun code-review-minimal--gitlab-api-url (&rest path-segments)
   "Build a full GitLab API URL by joining PATH-SEGMENTS onto the base URL."
-  (concat code-review-minimal-gitlab-base-url
+  (concat code-review-minimal-gitlab-api-url
           "/" (mapconcat #'identity path-segments "/")))
 
 (defun code-review-minimal--gitlab-http-request (method url &optional payload callback)
@@ -73,8 +73,8 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
   (code-review-minimal--assert-token 'gitlab)
   (let* ((token    (code-review-minimal--get-token 'gitlab))
          (host     (replace-regexp-in-string "^https?://" ""
-                                             code-review-minimal-gitlab-base-url))
-         (resource (substring url (length code-review-minimal-gitlab-base-url)))
+                                             code-review-minimal-gitlab-api-url))
+         (resource (substring url (length code-review-minimal-gitlab-api-url)))
          (wrapped-callback
           (when callback
             (lambda (result _headers _status _req)

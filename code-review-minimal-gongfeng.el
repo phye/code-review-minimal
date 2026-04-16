@@ -15,7 +15,7 @@
 ;;   ~/.authinfo (or ~/.authinfo.gpg):
 ;;     machine git.woa.com      login ^crm password <token>
 ;;     machine code.tencent.com login ^crm password <token>
-;;   The host is derived from `code-review-minimal-gongfeng-base-url'.
+;;   The host is derived from `code-review-minimal-gongfeng-api-url'.
 ;;
 ;; HTTP layer: Emacs built-in `url-retrieve' with a PRIVATE-TOKEN request
 ;; header.  Gongfeng runs a customised GitLab REST API v3 that is NOT
@@ -23,7 +23,7 @@
 ;; ghub is deliberately avoided here.
 ;;
 ;; API endpoints used (base: https://git.woa.com/api/v3, configurable via
-;; `code-review-minimal-gongfeng-base-url'):
+;; `code-review-minimal-gongfeng-api-url'):
 ;;   Resolve MR id : GET  /projects/:encoded_path/merge_request/iid/:iid → .id
 ;;   List notes    : GET  /projects/:encoded_path/merge_requests/:id/notes
 ;;   Create note   : POST /projects/:encoded_path/merge_requests/:id/notes
@@ -50,7 +50,7 @@
 (defvar code-review-minimal--mr-iid)
 (defvar code-review-minimal--mr-id)
 (defvar code-review-minimal--current-backend)
-(defvar code-review-minimal-gongfeng-base-url)
+(defvar code-review-minimal-gongfeng-api-url)
 (declare-function code-review-minimal--git-remote-url        "code-review-minimal")
 (declare-function code-review-minimal--get-token             "code-review-minimal")
 (declare-function code-review-minimal--relative-file-path    "code-review-minimal")
@@ -76,7 +76,7 @@
 
 (defun code-review-minimal--gongfeng-api-url (&rest path-segments)
   "Build a full Gongfeng API URL by joining PATH-SEGMENTS onto the base URL."
-  (concat code-review-minimal-gongfeng-base-url
+  (concat code-review-minimal-gongfeng-api-url
           "/" (mapconcat #'identity path-segments "/")))
 
 (defun code-review-minimal--gongfeng-http-status ()

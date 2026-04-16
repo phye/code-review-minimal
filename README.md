@@ -192,9 +192,9 @@ The lookup order for each host is:
 For GitHub Enterprise or self-hosted GitLab, override the base URL:
 
 ```elisp
-(setq code-review-minimal-github-base-url "https://github.company.com/api/v3")
-(setq code-review-minimal-gitlab-base-url "https://gitlab.company.com/api/v4")
-(setq code-review-minimal-gongfeng-base-url "https://git.company.com/api/v3")
+(setq code-review-minimal-github-api-url "https://github.company.com/api/v3")
+(setq code-review-minimal-gitlab-api-url "https://gitlab.company.com/api/v4")
+(setq code-review-minimal-gongfeng-api-url "https://git.company.com/api/v3")
 ```
 
 ### Force a backend
@@ -223,13 +223,13 @@ is loaded:
 (with-eval-after-load 'code-review-minimal
 
   ;; Optional: declare the base URL as a custom variable
-  (defcustom my-forgejo-base-url "https://forgejo.example.com/api/v1"
+  (defcustom my-forgejo-api-url "https://forgejo.example.com/api/v1"
     "API base URL for my Forgejo instance."
     :type 'string)
 
   (code-review-minimal-register-backend
     'forgejo
-    :base-url-var  'my-forgejo-base-url
+    :api-url-var  'my-forgejo-api-url
     :remote-re     "forgejo\\.example\\.com"
     :fetch         #'my--forgejo-fetch-comments
     :post          #'my--forgejo-post-comment
@@ -238,7 +238,7 @@ is loaded:
 ```
 
 The registered backend is automatically available for auto-detection (via
-`:remote-re`), token lookup (via `:base-url-var`), and all dispatch calls.
+`:remote-re`), token lookup (via `:api-url-var`), and all dispatch calls.
 User-registered backends are prepended to the registry and therefore take
 precedence over the built-in ones for remote-URL matching.
 
@@ -296,7 +296,7 @@ All faces have dark- and light-theme variants and are defined in
 
 **API errors for self-hosted instances**
 
-- Ensure `code-review-minimal-*-base-url` matches your instance's API root.
+- Ensure `code-review-minimal-*-api-url` matches your instance's API root.
 
 ## License
 

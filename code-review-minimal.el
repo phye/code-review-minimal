@@ -214,19 +214,30 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
 
 ;;;; ─── Token Management ──────────────────────────────────────────────────────
 
-(defun code-review-minimal--authinfo-token (host)
+(defun code-review-minimal--git-config (key)
+  "Return the value of git config KEY, or nil if unset."
+  (let ((val (string-trim
+              (shell-command-to-string
+               (format "git config --global %s 2>/dev/null" key)))))
+    (and (not (string-empty-p val)) val)))
+
+(defun code-review-minimal--authinfo-token (host backend)
   "Look up a token for HOST in authinfo/netrc via `auth-source'.
 Returns the secret string, or nil if not found.
-Uses login `^crm' (Code-Review-Minimal) to distinguish these entries from
-tokens used by other Emacs forge tools (e.g. Magit/ghub use login `^')."
-  (let ((found (or (car (auth-source-search :host host :user "^crm" :max 1))
-                   (car (auth-source-search :host host :max 1)))))
-    (when found
-      (let ((secret (plist-get found :secret)))
-        (if (functionp secret) (funcall secret) secret))))) matching :host entry with :user \"^\" (the
-conventional forge/ghub convention) or any user."
-  (let ((found (or (car (auth-source-search :host host :user "^" :max 1))
-                   (car (auth-source-search :host host :max 1)))))
+
+Searches in order:
+  1. login ^crm                   — dedicated code-review-minimal entry
+  2. login <git-config-user>^crm  — per-user entry (git config BACKEND.user)
+  3. any login on HOST            — fallback"
+  (let* ((git-user (code-review-minimal--git-config
+                    (format "%s.user" (symbol-name backend))))
+         (found
+          (or (car (auth-source-search :host host :user "^crm" :max 1))
+              (and git-user
+                   (car (auth-source-search :host host
+                                            :user (concat git-user "^crm")
+                                            :max 1)))
+              (car (auth-source-search :host host :max 1)))))
     (when found
       (let ((secret (plist-get found :secret)))
         (if (functionp secret) (funcall secret) secret)))))
@@ -243,12 +254,13 @@ automatically."
       ('github   code-review-minimal-github-base-url)
       ('gitlab   code-review-minimal-gitlab-base-url)
       ('gongfeng code-review-minimal-gongfeng-base-url)
-      (_ (error "Unknown backend: %s" backend))))))
+      (_ (error "Unknown backend: %s" backend))))
+   backend))
 
 (defun code-review-minimal--assert-token (backend)
   "Signal an error if no token is found in authinfo for BACKEND."
   (unless (let ((tok (code-review-minimal--get-token backend)))
-            (and tok (not (string-empty-p tok))))
+            (and (stringp tok) (not (string-empty-p tok))))
     (user-error
      "code-review-minimal: No token found for %s.  \
 Add an entry to ~/.authinfo (or ~/.authinfo.gpg), e.g.:\n  machine %s login ^crm password <token>"

@@ -15,7 +15,8 @@
 ;;   1. Add an entry to ~/.authinfo (or ~/.authinfo.gpg) for each forge you use:
 ;;        machine api.github.com  login ^crm password <github-token>
 ;;        machine gitlab.com      login ^crm password <gitlab-token>
-;;        machine git.woa.com     login ^crm password <gongfeng-token>
+;;        machine git.woa.com      login ^crm password <gongfeng-token>
+;;        machine code.tencent.com login ^crm password <gongfeng-token>
 ;;      The `^crm' login distinguishes these entries from tokens used by other
 ;;      Emacs forge tools (e.g. Magit/ghub use `^').
 ;;      The host is taken from `code-review-minimal-*-base-url', so GitHub
@@ -37,7 +38,7 @@
 ;;                 HTTP: ghub (Authorization: Bearer <token>)
 ;;   - gitlab    : gitlab.com and self-hosted GitLab (API v4)
 ;;                 HTTP: ghub with :forge 'gitlab (PRIVATE-TOKEN header)
-;;   - gongfeng  : git.woa.com — Tencent's internal GitLab (API v3)
+;;   - gongfeng  : git.woa.com / code.tencent.com — Tencent's Gongfeng (工蜂) (API v3)
 ;;                 HTTP: url-retrieve with explicit PRIVATE-TOKEN header
 ;;                 (Gongfeng's API v3 is not wire-compatible with GitLab v4)
 ;;
@@ -113,8 +114,8 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
   "Auto-detect backend from REMOTE-URL.
 Returns one of: github, gitlab, gongfeng, or nil."
   (cond
-   ;; Gongfeng (Tencent GitLab) - check before generic gitlab
-   ((string-match-p "git\.woa\.com" remote-url)
+   ;; Gongfeng (工蜂) — git.woa.com (internal) or code.tencent.com (external)
+   ((string-match-p "git\\.woa\\.com\\|code\\.tencent\\.com" remote-url)
     'gongfeng)
    ;; GitHub
    ((or (string-match-p "github\.com" remote-url)

@@ -7,12 +7,14 @@
 ;;
 ;; Gongfeng backend for code-review-minimal.
 ;; Handles MR comment fetching, posting, updating, and resolving against
-;; Gongfeng (git.woa.com), Tencent's internal GitLab instance.
+;; Gongfeng (工蜂), Tencent's code hosting platform, accessible at
+;; git.woa.com (internal) and code.tencent.com (external).
 ;;
 ;; Authentication:
 ;;   Tokens are read exclusively from authinfo/netrc.  Add an entry to
 ;;   ~/.authinfo (or ~/.authinfo.gpg):
-;;     machine git.woa.com login ^crm password <token>
+;;     machine git.woa.com      login ^crm password <token>
+;;     machine code.tencent.com login ^crm password <token>
 ;;   The host is derived from `code-review-minimal-gongfeng-base-url'.
 ;;
 ;; HTTP layer: Emacs built-in `url-retrieve' with a PRIVATE-TOKEN request

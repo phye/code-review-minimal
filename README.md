@@ -4,12 +4,12 @@
 > [Claude Code](https://claude.ai/code).
 
 A lightweight Emacs minor mode for performing code review directly inside Emacs
-against GitHub Pull Requests, GitLab Merge Requests, and Gongfeng (Tencent
-GitLab, git.woa.com) MRs.
+against GitHub Pull Requests, GitLab Merge Requests, and Gongfeng (工蜂,
+git.woa.com / code.tencent.com) MRs.
 
 ## Features
 
-- **Multi-platform**: GitHub, GitLab, and Gongfeng (git.woa.com)
+- **Multi-platform**: GitHub, GitLab, and Gongfeng (git.woa.com / code.tencent.com)
 - **URL-first entry point**: paste a full MR/PR URL — backend, project, and IID
   are all parsed automatically
 - **Overlay-based comments**: review comments appear as inline overlays at the
@@ -84,7 +84,8 @@ from tokens used by other Emacs tools (e.g. Magit/ghub use `login ^`):
 ```
 machine api.github.com  login ^crm password <github-token>
 machine gitlab.com      login ^crm password <gitlab-token>
-machine git.woa.com     login ^crm password <gongfeng-token>
+machine git.woa.com      login ^crm password <gongfeng-token>
+machine code.tencent.com login ^crm password <gongfeng-token>
 ```
 
 For self-hosted instances, use the actual hostname, e.g.:
@@ -229,7 +230,7 @@ All faces have dark- and light-theme variants and are defined in
 | GitHub Enterprise | custom | REST v3 |
 | GitLab | gitlab.com | REST v4 |
 | Self-hosted GitLab | custom | REST v4 |
-| Gongfeng (工蜂) | git.woa.com | REST v3 (custom) |
+| Gongfeng (工蜂) | git.woa.com, code.tencent.com | REST v3 (custom) |
 
 ## Troubleshooting
 

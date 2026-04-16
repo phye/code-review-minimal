@@ -33,6 +33,7 @@ git.woa.com / code.tencent.com) MRs.
 | Review interface | Dedicated diff buffer | Dedicated diff buffer | **Inline overlays in your buffer** |
 | Focus | Full PR review (approve, request changes) | Full review workflow | **Commenting on open files only** |
 | Setup | authinfo token | Sync local DB first | Paste a URL and go |
+| Custom backends | No | No | **Yes — register from init, no fork needed** |
 
 **code-review-minimal** is intentionally narrow in scope:
 
@@ -44,6 +45,9 @@ git.woa.com / code.tencent.com) MRs.
   are editing — no context switching to a separate diff view.
 - **One job.** Open a file, paste an MR/PR URL, see comments inline, post
   replies. Nothing more.
+- **Extensible backends.** The backend registry (`code-review-minimal-backend-registry`)
+  is public. Add support for any forge without forking the package — just call
+  `code-review-minimal-register-backend` from your init file.
 
 If you need a full review workflow — diff views, approvals, PR creation — use
 [github-review](https://github.com/charignon/github-review),
@@ -207,6 +211,40 @@ Or interactively (persists to `.git/code-review-minimal-backend`):
 ```
 M-x code-review-minimal-set-backend-for-repo
 ```
+
+### Adding a custom backend
+
+The backend registry is public. You can add support for any additional forge
+without modifying or forking this package. Call
+`code-review-minimal-register-backend` from your Emacs init after the package
+is loaded:
+
+```elisp
+(with-eval-after-load 'code-review-minimal
+
+  ;; Optional: declare the base URL as a custom variable
+  (defcustom my-forgejo-base-url "https://forgejo.example.com/api/v1"
+    "API base URL for my Forgejo instance."
+    :type 'string)
+
+  (code-review-minimal-register-backend
+    'forgejo
+    :base-url-var  'my-forgejo-base-url
+    :remote-re     "forgejo\\.example\\.com"
+    :fetch         #'my--forgejo-fetch-comments
+    :post          #'my--forgejo-post-comment
+    :update        #'my--forgejo-update-comment
+    :resolve       #'my--forgejo-resolve-comment))
+```
+
+The registered backend is automatically available for auto-detection (via
+`:remote-re`), token lookup (via `:base-url-var`), and all dispatch calls.
+User-registered backends are prepended to the registry and therefore take
+precedence over the built-in ones for remote-URL matching.
+
+The four functions must follow the same async conventions as the built-in
+backends — see the commentary in any of the `code-review-minimal-*.el` files
+for the expected signatures and patterns.
 
 ### Faces
 

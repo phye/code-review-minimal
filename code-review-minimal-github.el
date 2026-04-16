@@ -17,9 +17,13 @@
 ;;
 ;; HTTP layer: ghub (`ghub-request'), Authorization: Bearer header.
 ;;
-;; Note: GitHub does not expose an API endpoint to mark review comments as
-;; resolved; `code-review-minimal--github-resolve-comment' is therefore a
-;; no-op that directs the user to the web interface.
+;; Backend contract:
+;;   :fetch  (callback)            — calls (callback THREADS) where THREADS is a
+;;                                   list of plists; see `code-review-minimal-register-backend'.
+;;   :post   (beg end body on-success) — calls (on-success) on success.
+;;   :update (note-id body on-success) — calls (on-success) on success.
+;;   :resolve (ov on-success)          — GitHub has no resolve API; shows a
+;;                                       message and does NOT call on-success.
 
 ;;; Code:
 
@@ -37,8 +41,6 @@
 (declare-function code-review-minimal--assert-token              "code-review-minimal")
 (declare-function code-review-minimal--relative-file-path        "code-review-minimal")
 (declare-function code-review-minimal--line-number-at            "code-review-minimal")
-(declare-function code-review-minimal--clear-overlays            "code-review-minimal")
-(declare-function code-review-minimal--insert-discussion-overlay "code-review-minimal")
 
 ;;;; ─── GitHub Remote Parsing ─────────────────────────────────────────────────
 
@@ -109,53 +111,48 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
                 `((owner . ,owner)
                   (repo  . ,repo))))))))
 
-(defun code-review-minimal--github-fetch-comments ()
-  "Fetch PR comments and render overlays (GitHub)."
+(defun code-review-minimal--github-fetch-comments (callback)
+  "Fetch PR comments and call CALLBACK with a list of thread plists (GitHub)."
   (code-review-minimal--github-ensure-project-info)
   (let* ((owner     (alist-get 'owner code-review-minimal--project-info))
          (repo      (alist-get 'repo  code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid)
-         (rel-path  (code-review-minimal--relative-file-path))
-         (buf       (current-buffer)))
+         (pr-number code-review-minimal--mr-iid))
     (message "code-review-minimal: fetching comments for PR #%d ..." pr-number)
     (let ((url (code-review-minimal--github-api-url
                 "repos" owner repo "pulls" (number-to-string pr-number) "comments")))
       (code-review-minimal--github-http-request
        "GET" url nil
        (lambda (comments)
-         (with-current-buffer buf
-           (code-review-minimal--clear-overlays)
-           (code-review-minimal--github-process-comments comments rel-path)))))))
+         (funcall callback (code-review-minimal--github-normalize-comments comments)))))))
 
-(defun code-review-minimal--github-process-comments (comments rel-path)
-  "Process GitHub COMMENTS and create overlays for REL-PATH."
-  (let ((count 0))
-    (dolist (c comments)
-      (let ((path    (alist-get 'path       c))
-            (line    (alist-get 'line       c))
-            (body    (alist-get 'body       c))
-            (id      (alist-get 'id         c))
-            (user    (alist-get 'login (alist-get 'user c)))
-            (created (alist-get 'created_at c)))
-        (when (and path line (string= path rel-path))
-          (let* ((note   `((author . ((name . ,user)))
-                            (body . ,body)
-                            (created_at . ,created)))
-                 (thread (list note)))
-            (code-review-minimal--insert-discussion-overlay line thread nil id)
-            (cl-incf count)))))
-    (message "code-review-minimal: %d comment(s) in this file" count)))
+(defun code-review-minimal--github-normalize-comments (comments)
+  "Convert GitHub COMMENTS list into the standard thread plist format."
+  (mapcar (lambda (c)
+            (let* ((path    (alist-get 'path       c))
+                   (line    (alist-get 'line       c))
+                   (body    (alist-get 'body       c))
+                   (id      (alist-get 'id         c))
+                   (user    (alist-get 'login (alist-get 'user c)))
+                   (created (alist-get 'created_at c))
+                   (note    `((author . ((name . ,user)))
+                              (body . ,body)
+                              (created_at . ,created))))
+              (list :path     path
+                    :line     line
+                    :thread   (list note)
+                    :resolved nil
+                    :note-id  id)))
+          (or comments '())))
 
-(defun code-review-minimal--github-post-comment (_beg end body)
-  "Post review comment on line at END with BODY (GitHub).
+(defun code-review-minimal--github-post-comment (_beg end body on-success)
+  "Post review comment on line at END with BODY (GitHub), then call ON-SUCCESS.
 GitHub requires the PR head commit SHA for review comments."
   (code-review-minimal--github-ensure-project-info)
   (let* ((owner     (alist-get 'owner code-review-minimal--project-info))
          (repo      (alist-get 'repo  code-review-minimal--project-info))
          (pr-number code-review-minimal--mr-iid)
          (rel-path  (code-review-minimal--relative-file-path))
-         (line      (code-review-minimal--line-number-at end))
-         (src-buf   (current-buffer)))
+         (line      (code-review-minimal--line-number-at end)))
     ;; First fetch the PR head commit SHA
     (let ((pr-url (code-review-minimal--github-api-url
                    "repos" owner repo "pulls" (number-to-string pr-number))))
@@ -180,16 +177,14 @@ GitHub requires the PR head commit SHA for review comments."
                       (progn
                         (message "code-review-minimal: comment posted (id=%s)"
                                  (alist-get 'id resp))
-                        (with-current-buffer src-buf
-                          (code-review-minimal--github-fetch-comments)))
+                        (funcall on-success))
                     (message "code-review-minimal: failed to post comment"))))))))))))
 
-(defun code-review-minimal--github-update-comment (note-id body)
-  "Update NOTE-ID with BODY (GitHub)."
+(defun code-review-minimal--github-update-comment (note-id body on-success)
+  "Update NOTE-ID with BODY (GitHub), then call ON-SUCCESS."
   (code-review-minimal--github-ensure-project-info)
   (let* ((owner   (alist-get 'owner code-review-minimal--project-info))
          (repo    (alist-get 'repo  code-review-minimal--project-info))
-         (src-buf (current-buffer))
          (url     (code-review-minimal--github-api-url
                    "repos" owner repo "pulls" "comments"
                    (number-to-string note-id))))
@@ -199,12 +194,11 @@ GitHub requires the PR head commit SHA for review comments."
        (if (and resp (alist-get 'id resp))
            (progn
              (message "code-review-minimal: comment %d updated" note-id)
-             (with-current-buffer src-buf
-               (code-review-minimal--github-fetch-comments)))
+             (funcall on-success))
          (message "code-review-minimal: failed to update comment %d" note-id))))))
 
-(defun code-review-minimal--github-resolve-comment (_ov)
-  "Resolve comment overlay OV (GitHub).
+(defun code-review-minimal--github-resolve-comment (_note-id _note-body _on-success)
+  "Resolve comment (GitHub).
 GitHub does not provide a REST API for resolving review comments;
 use the web interface instead."
   (message "code-review-minimal: GitHub review comments are resolved via the web interface"))

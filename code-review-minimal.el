@@ -9,7 +9,7 @@
 ;;
 ;; code-review-minimal is a lightweight minor mode for performing code review
 ;; directly inside Emacs against GitHub Pull Requests, GitLab Merge Requests,
-;; and Gongfeng (Tencent GitLab) MRs.
+;; and Gongfeng (工蜂) MRs.
 ;;
 ;; Quick start:
 ;;   1. Add an entry to ~/.authinfo (or ~/.authinfo.gpg) for each forge you use:
@@ -60,7 +60,18 @@
 (require 'code-review-minimal-gitlab)
 (require 'code-review-minimal-gongfeng)
 
-;;;; ─── Customisation ────────────────────────────────────────────────────────
+;;;; ─── Backend Interface ─────────────────────────────────────────────────────
+;;
+;; Everything a backend needs and everything the core knows about backends lives
+;; here: configuration, URL construction, token lookup, remote detection,
+;; URL parsing, backend selection, and the dispatch table.
+;;
+;; To add a new backend without modifying this file, push an entry to
+;; `code-review-minimal-backend-registry' from your Emacs init or package:
+;;   (push '(mybackend :base-url-var my-base-url ...) code-review-minimal-backend-registry)
+;; or use the convenience wrapper `code-review-minimal-register-backend'.
+
+;;;; ── Configuration ──
 
 (defgroup code-review-minimal nil
   "Code-review overlays for GitHub/GitLab/Gongfeng Pull/Merge Requests."
@@ -73,24 +84,26 @@ If nil (the default), the backend is auto-detected from the git remote URL
 and the result is cached per repository.  Only set this when auto-detection
 fails or gives the wrong result for a particular repository.
 
-Valid values: nil (auto), `github', `gitlab', `gongfeng'.
+Valid values: nil (auto), or any backend symbol registered in
+`code-review-minimal-backend-registry' (e.g. `github', `gitlab', `gongfeng').
 
 This variable is intended to be set per-repository via a .dir-locals.el file:
 
   ((nil . ((code-review-minimal-backend . gongfeng))))
 
 It is declared safe for directory-local use so Emacs will not prompt for
-confirmation when the value is one of the known backend symbols."
+confirmation when the value is a registered backend symbol."
   :type '(choice (const :tag "Auto-detect" nil)
                  (const :tag "GitHub" github)
                  (const :tag "GitLab" gitlab)
-                 (const :tag "Gongfeng (Tencent GitLab)" gongfeng))
+                 (const :tag "Gongfeng (工蜂)" gongfeng))
   :group 'code-review-minimal)
 
+;; Derived from the registry at runtime so new backends are automatically valid.
 (put 'code-review-minimal-backend 'safe-local-variable
-     (lambda (v) (memq v '(nil github gitlab gongfeng))))
+     (lambda (v) (or (null v)
+                     (assq v code-review-minimal-backend-registry))))
 
-;; API base URLs
 (defcustom code-review-minimal-github-base-url "https://api.github.com"
   "Base URL for GitHub API.
 For GitHub Enterprise, use: https://your-github-enterprise.com/api/v3"
@@ -108,24 +121,318 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
   :type 'string
   :group 'code-review-minimal)
 
-;;;; ─── Backend Detection ─────────────────────────────────────────────────────
+;;;; ── Backend Registry ──
+;;
+;; THE single extension point for backends.
+;;
+;; Each entry: (BACKEND-SYMBOL PLIST) where PLIST contains:
+;;
+;;   :base-url-var  Symbol of the `defcustom' holding the API base URL.
+;;                  Add a matching defcustom in the Configuration section above.
+;;   :remote-re     Regexp matched against the git remote URL for auto-detection.
+;;                  Entries are tested in order; put more-specific patterns first.
+;;
+;;   :fetch   Function (callback)
+;;     Fetch all MR/PR threads asynchronously.  On completion call:
+;;       (funcall callback THREADS)
+;;     where THREADS is a list of plists with keys:
+;;       :path     — file path string (relative to git root)
+;;       :line     — 1-based integer line number
+;;       :thread   — list of note alists, each with keys `author', `body',
+;;                   `created_at' (author is an alist with key `name')
+;;       :resolved — t (resolved), `:json-false' (open), or nil (unknown)
+;;       :note-id  — integer id of the root note
+;;     Return ALL threads for the MR — do NOT filter by current file.
+;;     Do NOT touch overlays; the core handles rendering.
+;;
+;;   :post    Function (beg end body on-success)
+;;     Post a new inline comment.  Call (funcall on-success) on success.
+;;     Do NOT re-fetch comments; the core does that via on-success.
+;;
+;;   :update  Function (note-id body on-success)
+;;     Update an existing comment.  Call (funcall on-success) on success.
+;;
+;;   :resolve Function (note-id note-body on-success)
+;;     Mark a thread resolved.  NOTE-ID is the integer id of the root note;
+;;     NOTE-BODY is its current body string (some APIs require it on update).
+;;     Call (funcall on-success) on success.
+;;
+;; To add a backend FOO without editing this file:
+;;   1. Create code-review-minimal-foo.el implementing the four functions.
+;;   2. In your Emacs init (after this package is loaded), call:
+;;        (code-review-minimal-register-backend
+;;          'foo
+;;          :base-url-var  'my-foo-base-url
+;;          :remote-re     "myfoo\\.example\\.com"
+;;          :fetch         #'my--foo-fetch-comments
+;;          :post          #'my--foo-post-comment
+;;          :update        #'my--foo-update-comment
+;;          :resolve       #'my--foo-resolve-comment)
+;;      or push directly:
+;;        (push '(foo :base-url-var ...) code-review-minimal-backend-registry)
+;;   Detection, token lookup, and dispatch are all driven by this table.
+
+(defvar code-review-minimal-backend-registry
+  '((gongfeng
+     :base-url-var  code-review-minimal-gongfeng-base-url
+     :remote-re     "git\\.woa\\.com\\|code\\.tencent\\.com"
+     :fetch         code-review-minimal--gongfeng-fetch-comments
+     :post          code-review-minimal--gongfeng-post-comment
+     :update        code-review-minimal--gongfeng-update-comment
+     :resolve       code-review-minimal--gongfeng-resolve-comment)
+    (github
+     :base-url-var  code-review-minimal-github-base-url
+     :remote-re     "github"
+     :fetch         code-review-minimal--github-fetch-comments
+     :post          code-review-minimal--github-post-comment
+     :update        code-review-minimal--github-update-comment
+     :resolve       code-review-minimal--github-resolve-comment)
+    (gitlab
+     :base-url-var  code-review-minimal-gitlab-base-url
+     :remote-re     "gitlab"
+     :fetch         code-review-minimal--gitlab-fetch-comments
+     :post          code-review-minimal--gitlab-post-comment
+     :update        code-review-minimal--gitlab-update-comment
+     :resolve       code-review-minimal--gitlab-resolve-comment))
+  "Alist mapping backend symbols to their configuration and function table.
+
+Each entry has the form (BACKEND-SYMBOL :key value ...).  See the comment
+above for the full list of required keys.
+
+Users may add entries to this list from their Emacs init without modifying
+this file — either via `code-review-minimal-register-backend' or by pushing
+directly to this variable before or after loading the package.")
+
+(defun code-review-minimal-register-backend (backend &rest plist)
+  "Register BACKEND with its configuration PLIST in the backend registry.
+BACKEND is a symbol (e.g. `myfoo').  PLIST must supply:
+
+  :base-url-var  — symbol of the defcustom holding the API base URL
+  :remote-re     — regexp for auto-detecting this backend from a remote URL
+  :fetch         — function (callback) fetching threads and passing them to callback
+  :post          — function (beg end body on-success) posting a new comment
+  :update        — function (note-id body on-success) updating a comment
+  :resolve       — function (ov on-success) resolving a comment thread
+
+Backend functions are responsible only for HTTP communication.  They must
+NOT touch overlays or re-fetch comments — the core handles both via the
+callback / on-success arguments.
+
+New entries are prepended so they take precedence over built-in ones for
+:remote-re matching.  If a backend with the same symbol already exists it
+is replaced.
+
+Example (in your init file, after loading code-review-minimal):
+
+  (code-review-minimal-register-backend
+    \\='myfoo
+    :base-url-var  \\='my-foo-base-url
+    :remote-re     \"myfoo\\\\.example\\\\.com\"
+    :fetch         #\\='my--foo-fetch-comments
+    :post          #\\='my--foo-post-comment
+    :update        #\\='my--foo-update-comment
+    :resolve       #\\='my--foo-resolve-comment)"
+  (setq code-review-minimal-backend-registry
+        (cons (cons backend plist)
+              (assq-delete-all backend code-review-minimal-backend-registry))))
+
+(defun code-review-minimal--backend-prop (backend prop)
+  "Return PROP for BACKEND from `code-review-minimal-backend-registry'.
+Signals an error if BACKEND is not registered."
+  (let ((entry (assq backend code-review-minimal-backend-registry)))
+    (unless entry
+      (error "code-review-minimal: unknown backend `%s'" backend))
+    (plist-get (cdr entry) prop)))
+
+;;;; ── Detection & Selection ──
 
 (defun code-review-minimal--detect-backend (remote-url)
-  "Auto-detect backend from REMOTE-URL.
-Returns one of: github, gitlab, gongfeng, or nil."
-  (cond
-   ;; Gongfeng (工蜂) — git.woa.com (internal) or code.tencent.com (external)
-   ((string-match-p "git\\.woa\\.com\\|code\\.tencent\\.com" remote-url)
-    'gongfeng)
-   ;; GitHub
-   ((or (string-match-p "github\.com" remote-url)
-        (string-match-p "github" remote-url))
-    'github)
-   ;; Generic GitLab
-   ((string-match-p "gitlab" remote-url)
-    'gitlab)
-   ;; Default to nil if unknown
-   (t nil)))
+  "Auto-detect backend symbol from REMOTE-URL, or nil if unrecognised.
+Backends are tested in the order they appear in
+`code-review-minimal-backend-registry'."
+  (car (cl-find-if (lambda (entry)
+                     (string-match-p (plist-get (cdr entry) :remote-re) remote-url))
+                   code-review-minimal-backend-registry)))
+
+(defun code-review-minimal--ensure-backend ()
+  "Determine and return the backend to use.
+Uses `code-review-minimal-backend' if set, otherwise auto-detects from remote URL.
+Caches the result per repository."
+  (unless code-review-minimal--current-backend
+    (let ((cached (code-review-minimal--load-cached-backend)))
+      (if cached
+          (setq code-review-minimal--current-backend cached)
+        (let* ((remote (code-review-minimal--git-remote-url))
+               (detected (code-review-minimal--detect-backend remote))
+               (backend (or code-review-minimal-backend detected)))
+          (if backend
+              (progn
+                (setq code-review-minimal--current-backend backend)
+                (code-review-minimal--save-backend backend)
+                (message "code-review-minimal: auto-detected %s backend from remote" backend))
+            (user-error "code-review-minimal: Cannot detect backend from remote: %s. \
+Please set `code-review-minimal-backend'" remote))))))
+  code-review-minimal--current-backend)
+
+;;;; ── Token Management ──
+
+(defun code-review-minimal--git-config (key)
+  "Return the value of git config KEY, or nil if unset."
+  (let ((val (string-trim
+              (shell-command-to-string
+               (format "git config --global %s 2>/dev/null" key)))))
+    (and (not (string-empty-p val)) val)))
+
+(defun code-review-minimal--authinfo-token (host backend)
+  "Look up a token for HOST in authinfo/netrc via `auth-source'.
+Returns the secret string, or nil if not found.
+
+Searches in order:
+  1. login ^crm                   — dedicated code-review-minimal entry
+  2. login <git-config-user>^crm  — per-user entry (git config BACKEND.user)
+  3. any login on HOST            — fallback"
+  (let* ((git-user (code-review-minimal--git-config
+                    (format "%s.user" (symbol-name backend))))
+         (found
+          (or (car (auth-source-search :host host :user "^crm" :max 1))
+              (and git-user
+                   (car (auth-source-search :host host
+                                            :user (concat git-user "^crm")
+                                            :max 1)))
+              (car (auth-source-search :host host :max 1)))))
+    (when found
+      (let ((secret (plist-get found :secret)))
+        (if (functionp secret) (funcall secret) secret)))))
+
+(defun code-review-minimal--backend-host (backend)
+  "Return the hostname for BACKEND, derived from its base-URL defcustom."
+  (replace-regexp-in-string
+   "^https?://\\([^/]+\\).*" "\\1"
+   (symbol-value (code-review-minimal--backend-prop backend :base-url-var))))
+
+(defun code-review-minimal--get-token (backend)
+  "Get the authentication token for BACKEND from authinfo/netrc.
+The host is derived from the backend's :base-url-var registry entry."
+  (code-review-minimal--authinfo-token
+   (code-review-minimal--backend-host backend)
+   backend))
+
+(defun code-review-minimal--assert-token (backend)
+  "Signal an error if no token is found in authinfo for BACKEND."
+  (unless (let ((tok (code-review-minimal--get-token backend)))
+            (and (stringp tok) (not (string-empty-p tok))))
+    (user-error
+     "code-review-minimal: No token found for %s.  \
+Add an entry to ~/.authinfo (or ~/.authinfo.gpg), e.g.:\n  machine %s login ^crm password <token>"
+     backend
+     (code-review-minimal--backend-host backend))))
+
+;;;; ── Remote & URL Parsing ──
+
+(defun code-review-minimal--git-remote-url ()
+  "Return the URL of the `origin' remote."
+  (let ((default-directory
+         (or (locate-dominating-file (or buffer-file-name default-directory) ".git")
+             default-directory)))
+    (string-trim (shell-command-to-string "git remote get-url origin 2>/dev/null"))))
+
+(defun code-review-minimal--parse-mr-url (input)
+  "Parse a MR/PR URL or bare integer INPUT.
+Returns a plist with :iid and optionally :backend and :project-info, or nil.
+
+Supported URL formats:
+  GitHub:   https://github.com/OWNER/REPO/pull/IID
+  GitLab:   https://gitlab.com/NS/PROJECT/-/merge_requests/IID
+  Gongfeng: https://git.woa.com/NS/PROJECT/-/merge_requests/IID"
+  (when (and input (not (string-empty-p (string-trim input))))
+    (let ((s (string-trim input)))
+      (cond
+       ;; GitHub: https://HOST/OWNER/REPO/pull[s]/IID
+       ((string-match
+         "https?://\\([^/]*github[^/]*\\)/\\([^/]+\\)/\\([^/]+\\)/pulls?/\\([0-9]+\\)" s)
+        (list :iid          (string-to-number (match-string 4 s))
+              :backend      'github
+              :project-info `((owner . ,(match-string 2 s))
+                              (repo  . ,(match-string 3 s)))))
+       ;; GitLab / Gongfeng: https://HOST/NS/.../REPO/-/merge_requests/IID
+       ((string-match
+         "https?://\\([^/]+\\)/\\(.*\\)/-/merge_requests/\\([0-9]+\\)" s)
+        (let* ((host    (match-string 1 s))
+               (path    (match-string 2 s))
+               (iid     (string-to-number (match-string 3 s)))
+               (backend (code-review-minimal--detect-backend host)))
+          (list :iid          iid
+                :backend      backend   ; nil when host is unknown; --ensure-backend will handle it
+                :project-info `((project-id . ,(url-hexify-string path))))))
+       ;; Bare integer fallback
+       ((string-match "\\`[0-9]+\\'" s)
+        (list :iid (string-to-number s)))))))
+
+;;;; ── Dispatch ──
+;;
+;; These four functions are the only callers of overlay and re-fetch logic.
+;; Backend functions receive callbacks / on-success thunks and must not touch
+;; overlays or trigger re-fetches themselves.
+
+(defun code-review-minimal--fetch-comments ()
+  "Fetch comments via the current backend and render them as overlays.
+The backend `:fetch' function receives a callback that is called with a list
+of thread plists (:path :line :thread :resolved :note-id).  The core filters
+by the current file and calls `code-review-minimal--insert-discussion-overlay'
+for each matching thread."
+  (let ((rel-path (code-review-minimal--relative-file-path))
+        (buf      (current-buffer)))
+    (funcall (code-review-minimal--backend-prop
+              code-review-minimal--current-backend :fetch)
+             (lambda (threads)
+               (with-current-buffer buf
+                 (code-review-minimal--clear-overlays)
+                 (if (null threads)
+                     (message "code-review-minimal: no comments found")
+                   (let ((count 0))
+                     (dolist (th threads)
+                       (when (and rel-path
+                                  (string= (plist-get th :path) rel-path))
+                         (code-review-minimal--insert-discussion-overlay
+                          (plist-get th :line)
+                          (plist-get th :thread)
+                          (plist-get th :resolved)
+                          (plist-get th :note-id))
+                         (cl-incf count)))
+                     (message "code-review-minimal: %d thread(s) in this file, %d total."
+                              count (length threads)))))))))
+
+(defun code-review-minimal--post-comment (beg end body)
+  "Post a new comment via the current backend, then re-fetch."
+  (let ((buf (current-buffer)))
+    (funcall (code-review-minimal--backend-prop
+              code-review-minimal--current-backend :post)
+             beg end body
+             (lambda ()
+               (with-current-buffer buf
+                 (code-review-minimal--fetch-comments))))))
+
+(defun code-review-minimal--update-comment (note-id body)
+  "Update an existing comment via the current backend, then re-fetch."
+  (let ((buf (current-buffer)))
+    (funcall (code-review-minimal--backend-prop
+              code-review-minimal--current-backend :update)
+             note-id body
+             (lambda ()
+               (with-current-buffer buf
+                 (code-review-minimal--fetch-comments))))))
+
+(defun code-review-minimal--resolve-comment (ov)
+  "Resolve a comment via the current backend, then re-fetch."
+  (let ((buf      (current-buffer))
+        (note-id  (overlay-get ov 'code-review-minimal-note-id))
+        (note-body (overlay-get ov 'code-review-minimal-body)))
+    (funcall (code-review-minimal--backend-prop
+              code-review-minimal--current-backend :resolve)
+             note-id note-body
+             (lambda ()
+               (with-current-buffer buf
+                 (code-review-minimal--fetch-comments))))))
 
 ;;;; ─── Per-repo Cache ─────────────────────────────────────────────────────────
 
@@ -212,130 +519,6 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
 
 (defvar-local code-review-minimal--input-prompt-end nil
   "Marker pointing to the end of the prompt in the input buffer.")
-
-;;;; ─── Token Management ──────────────────────────────────────────────────────
-
-(defun code-review-minimal--git-config (key)
-  "Return the value of git config KEY, or nil if unset."
-  (let ((val (string-trim
-              (shell-command-to-string
-               (format "git config --global %s 2>/dev/null" key)))))
-    (and (not (string-empty-p val)) val)))
-
-(defun code-review-minimal--authinfo-token (host backend)
-  "Look up a token for HOST in authinfo/netrc via `auth-source'.
-Returns the secret string, or nil if not found.
-
-Searches in order:
-  1. login ^crm                   — dedicated code-review-minimal entry
-  2. login <git-config-user>^crm  — per-user entry (git config BACKEND.user)
-  3. any login on HOST            — fallback"
-  (let* ((git-user (code-review-minimal--git-config
-                    (format "%s.user" (symbol-name backend))))
-         (found
-          (or (car (auth-source-search :host host :user "^crm" :max 1))
-              (and git-user
-                   (car (auth-source-search :host host
-                                            :user (concat git-user "^crm")
-                                            :max 1)))
-              (car (auth-source-search :host host :max 1)))))
-    (when found
-      (let ((secret (plist-get found :secret)))
-        (if (functionp secret) (funcall secret) secret)))))
-
-(defun code-review-minimal--get-token (backend)
-  "Get the authentication token for BACKEND from authinfo/netrc.
-The host is derived from the backend's API base-URL custom variable,
-so GitHub Enterprise and self-hosted GitLab instances are supported
-automatically."
-  (code-review-minimal--authinfo-token
-   (replace-regexp-in-string
-    "^https?://\\([^/]+\\).*" "\\1"
-    (pcase backend
-      ('github   code-review-minimal-github-base-url)
-      ('gitlab   code-review-minimal-gitlab-base-url)
-      ('gongfeng code-review-minimal-gongfeng-base-url)
-      (_ (error "Unknown backend: %s" backend))))
-   backend))
-
-(defun code-review-minimal--assert-token (backend)
-  "Signal an error if no token is found in authinfo for BACKEND."
-  (unless (let ((tok (code-review-minimal--get-token backend)))
-            (and (stringp tok) (not (string-empty-p tok))))
-    (user-error
-     "code-review-minimal: No token found for %s.  \
-Add an entry to ~/.authinfo (or ~/.authinfo.gpg), e.g.:\n  machine %s login ^crm password <token>"
-     backend
-     (replace-regexp-in-string
-      "^https?://\\([^/]+\\).*" "\\1"
-      (pcase backend
-        ('github   code-review-minimal-github-base-url)
-        ('gitlab   code-review-minimal-gitlab-base-url)
-        ('gongfeng code-review-minimal-gongfeng-base-url)
-        (_ "unknown-host"))))))
-
-;;;; ─── Remote Parsing ────────────────────────────────────────────────────────
-
-(defun code-review-minimal--git-remote-url ()
-  "Return the URL of the `origin' remote."
-  (let ((default-directory
-         (or (locate-dominating-file (or buffer-file-name default-directory) ".git")
-             default-directory)))
-    (string-trim (shell-command-to-string "git remote get-url origin 2>/dev/null"))))
-
-(defun code-review-minimal--parse-mr-url (input)
-  "Parse a MR/PR URL or bare integer INPUT.
-Returns a plist with :iid and optionally :backend and :project-info, or nil.
-
-Supported URL formats:
-  GitHub:   https://github.com/OWNER/REPO/pull/IID
-  GitLab:   https://gitlab.com/NS/PROJECT/-/merge_requests/IID
-  Gongfeng: https://git.woa.com/NS/PROJECT/-/merge_requests/IID"
-  (when (and input (not (string-empty-p (string-trim input))))
-    (let ((s (string-trim input)))
-      (cond
-       ;; GitHub: https://HOST/OWNER/REPO/pull[s]/IID
-       ((string-match
-         "https?://\\([^/]*github[^/]*\\)/\\([^/]+\\)/\\([^/]+\\)/pulls?/\\([0-9]+\\)" s)
-        (list :iid          (string-to-number (match-string 4 s))
-              :backend      'github
-              :project-info `((owner . ,(match-string 2 s))
-                              (repo  . ,(match-string 3 s)))))
-       ;; GitLab / Gongfeng: https://HOST/NS/.../REPO/-/merge_requests/IID
-       ((string-match
-         "https?://\\([^/]+\\)/\\(.*\\)/-/merge_requests/\\([0-9]+\\)" s)
-        (let* ((host    (match-string 1 s))
-               (path    (match-string 2 s))
-               (iid     (string-to-number (match-string 3 s)))
-               (backend (code-review-minimal--detect-backend host)))
-          (list :iid          iid
-                :backend      backend   ; nil when host is unknown; --ensure-backend will handle it
-                :project-info `((project-id . ,(url-hexify-string path))))))
-       ;; Bare integer fallback
-       ((string-match "\\`[0-9]+\\'" s)
-        (list :iid (string-to-number s)))))))
-
-;;;; ─── Backend Selection ─────────────────────────────────────────────────────
-
-(defun code-review-minimal--ensure-backend ()
-  "Determine and return the backend to use.
-Uses `code-review-minimal-backend' if set, otherwise auto-detects from remote URL.
-Caches the result per repository."
-  (unless code-review-minimal--current-backend
-    (let ((cached (code-review-minimal--load-cached-backend)))
-      (if cached
-          (setq code-review-minimal--current-backend cached)
-        ;; Auto-detect or use configured default
-        (let* ((remote (code-review-minimal--git-remote-url))
-               (detected (code-review-minimal--detect-backend remote))
-               (backend (or code-review-minimal-backend detected)))
-          (if backend
-              (progn
-                (setq code-review-minimal--current-backend backend)
-                (code-review-minimal--save-backend backend)
-                (message "code-review-minimal: auto-detected %s backend from remote" backend))
-            (user-error "code-review-minimal: Cannot detect backend from remote: %s. Please set `code-review-minimal-backend'" remote))))))
-  code-review-minimal--current-backend)
 
 ;;;; ─── Utility Functions ─────────────────────────────────────────────────────
 
@@ -525,40 +708,6 @@ If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY."
             (code-review-minimal--post-comment beg end body))
           (deactivate-mark)))))
   (code-review-minimal--close-input-overlay))
-
-;;;; ─── Backend Dispatch Functions ────────────────────────────────────────────
-
-(defun code-review-minimal--fetch-comments ()
-  "Fetch comments using current backend."
-  (pcase code-review-minimal--current-backend
-    ('github   (code-review-minimal--github-fetch-comments))
-    ('gitlab   (code-review-minimal--gitlab-fetch-comments))
-    ('gongfeng (code-review-minimal--gongfeng-fetch-comments))
-    (_ (error "Unknown backend: %s" code-review-minimal--current-backend))))
-
-(defun code-review-minimal--post-comment (beg end body)
-  "Post comment using current backend."
-  (pcase code-review-minimal--current-backend
-    ('github   (code-review-minimal--github-post-comment beg end body))
-    ('gitlab   (code-review-minimal--gitlab-post-comment beg end body))
-    ('gongfeng (code-review-minimal--gongfeng-post-comment beg end body))
-    (_ (error "Unknown backend: %s" code-review-minimal--current-backend))))
-
-(defun code-review-minimal--update-comment (note-id body)
-  "Update comment using current backend."
-  (pcase code-review-minimal--current-backend
-    ('github   (code-review-minimal--github-update-comment note-id body))
-    ('gitlab   (code-review-minimal--gitlab-update-comment note-id body))
-    ('gongfeng (code-review-minimal--gongfeng-update-comment note-id body))
-    (_ (error "Unknown backend: %s" code-review-minimal--current-backend))))
-
-(defun code-review-minimal--resolve-comment (ov)
-  "Resolve comment using current backend."
-  (pcase code-review-minimal--current-backend
-    ('github   (code-review-minimal--github-resolve-comment ov))
-    ('gitlab   (code-review-minimal--gitlab-resolve-comment ov))
-    ('gongfeng (code-review-minimal--gongfeng-resolve-comment ov))
-    (_ (error "Unknown backend: %s" code-review-minimal--current-backend))))
 
 ;;;; ─── Public Commands ───────────────────────────────────────────────────────
 

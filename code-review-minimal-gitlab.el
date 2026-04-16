@@ -20,6 +20,12 @@
 ;; This backend is for standard GitLab instances (API v4) only.  For Gongfeng
 ;; (Tencent's internal GitLab at git.woa.com, which runs a custom API v3
 ;; not wire-compatible with v4), see code-review-minimal-gongfeng.el.
+;;
+;; Backend contract:
+;;   :fetch  (callback)                — calls (callback THREADS)
+;;   :post   (beg end body on-success) — calls (on-success) on success
+;;   :update (note-id body on-success) — calls (on-success) on success
+;;   :resolve (ov on-success)          — calls (on-success) on success
 
 ;;; Code:
 
@@ -37,8 +43,6 @@
 (declare-function code-review-minimal--assert-token              "code-review-minimal")
 (declare-function code-review-minimal--relative-file-path        "code-review-minimal")
 (declare-function code-review-minimal--line-number-at            "code-review-minimal")
-(declare-function code-review-minimal--clear-overlays            "code-review-minimal")
-(declare-function code-review-minimal--insert-discussion-overlay "code-review-minimal")
 
 ;;;; ─── GitLab Remote Parsing ─────────────────────────────────────────────────
 
@@ -122,12 +126,10 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
                (setq code-review-minimal--mr-id mr-id))
              (funcall callback mr-id))))))))
 
-(defun code-review-minimal--gitlab-fetch-comments ()
-  "Fetch MR comments and render overlays (GitLab)."
+(defun code-review-minimal--gitlab-fetch-comments (callback)
+  "Fetch MR notes and call CALLBACK with a list of thread plists (GitLab)."
   (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-         (mr-iid     code-review-minimal--mr-iid)
-         (rel-path   (code-review-minimal--relative-file-path))
-         (buf        (current-buffer)))
+         (mr-iid     code-review-minimal--mr-iid))
     (message "code-review-minimal: fetching comments for MR !%d ..." mr-iid)
     (code-review-minimal--gitlab-resolve-mr-id
      (lambda (mr-id)
@@ -139,28 +141,23 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
          (code-review-minimal--gitlab-http-request
           "GET" url nil
           (lambda (notes)
-            (with-current-buffer buf
-              (code-review-minimal--clear-overlays)
-              (if (null notes)
-                  (message "code-review-minimal: no comments found")
-                (code-review-minimal--gitlab-process-notes notes rel-path))))))))))
+            (funcall callback
+                     (code-review-minimal--gitlab-normalize-notes notes)))))))))
 
-(defun code-review-minimal--gitlab-process-notes (notes rel-path)
-  "Process GitLab NOTES and create overlays for REL-PATH."
-  (let* ((total    (length notes))
-         (count    0)
-         (by-id    (make-hash-table))
-         (children (make-hash-table))
-         (roots    nil))
-    (dolist (n notes)
+(defun code-review-minimal--gitlab-normalize-notes (notes)
+  "Convert GitLab NOTES list into the standard thread plist format."
+  (let ((by-id    (make-hash-table))
+        (children (make-hash-table))
+        (roots    nil)
+        (result   nil))
+    (dolist (n (or notes '()))
       (let ((id  (alist-get 'id        n))
             (pid (alist-get 'parent_id n)))
         (puthash id n by-id)
         (if pid
             (puthash pid (append (gethash pid children) (list n)) children)
           (push n roots))))
-    (setq roots (nreverse roots))
-    (dolist (root roots)
+    (dolist (root (nreverse roots))
       (let* ((file-path    (alist-get 'file_path root))
              (note-pos     (alist-get 'note_position root))
              (latest-pos   (and note-pos (alist-get 'latest_position note-pos)))
@@ -173,20 +170,20 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
                                  (t nil)))
              (root-id      (alist-get 'id root))
              (thread       (cons root (gethash root-id children))))
-        (when (and (integerp line-num)
-                   file-path
-                   rel-path
-                   (string= file-path rel-path))
-          (code-review-minimal--insert-discussion-overlay line-num thread resolved root-id)
-          (cl-incf count))))
-    (message "code-review-minimal: %d thread(s) in this file, %d total notes." count total)))
+        (when (and (integerp line-num) file-path)
+          (push (list :path     file-path
+                      :line     line-num
+                      :thread   thread
+                      :resolved resolved
+                      :note-id  root-id)
+                result))))
+    (nreverse result)))
 
-(defun code-review-minimal--gitlab-post-comment (_beg end body)
-  "Post comment on line at END with BODY (GitLab)."
+(defun code-review-minimal--gitlab-post-comment (_beg end body on-success)
+  "Post comment on line at END with BODY (GitLab), then call ON-SUCCESS."
   (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
          (rel-path   (code-review-minimal--relative-file-path))
-         (end-line   (code-review-minimal--line-number-at end))
-         (src-buf    (current-buffer)))
+         (end-line   (code-review-minimal--line-number-at end)))
     (code-review-minimal--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let* ((url     (code-review-minimal--gitlab-api-url
@@ -202,14 +199,12 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
             (if (and resp (alist-get 'id resp))
                 (progn
                   (message "code-review-minimal: comment posted (id=%s)" (alist-get 'id resp))
-                  (with-current-buffer src-buf
-                    (code-review-minimal--gitlab-fetch-comments)))
+                  (funcall on-success))
               (message "code-review-minimal: failed to post comment")))))))))
 
-(defun code-review-minimal--gitlab-update-comment (note-id body)
-  "Update NOTE-ID with BODY (GitLab)."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-         (src-buf    (current-buffer)))
+(defun code-review-minimal--gitlab-update-comment (note-id body on-success)
+  "Update NOTE-ID with BODY (GitLab), then call ON-SUCCESS."
+  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id)))
     (code-review-minimal--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let* ((url     (code-review-minimal--gitlab-api-url
@@ -222,16 +217,12 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
             (if (and resp (alist-get 'id resp))
                 (progn
                   (message "code-review-minimal: note %d updated" note-id)
-                  (with-current-buffer src-buf
-                    (code-review-minimal--gitlab-fetch-comments)))
+                  (funcall on-success))
               (message "code-review-minimal: failed to update note %d" note-id)))))))))
 
-(defun code-review-minimal--gitlab-resolve-comment (ov)
-  "Resolve comment at overlay OV (GitLab)."
-  (let ((note-id    (overlay-get ov 'code-review-minimal-note-id))
-        (note-body  (overlay-get ov 'code-review-minimal-body))
-        (project-id (code-review-minimal--gitlab-ensure-project-id))
-        (src-buf    (current-buffer)))
+(defun code-review-minimal--gitlab-resolve-comment (note-id note-body on-success)
+  "Resolve comment NOTE-ID with NOTE-BODY (GitLab), then call ON-SUCCESS."
+  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id)))
     (code-review-minimal--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let ((url (code-review-minimal--gitlab-api-url
@@ -244,8 +235,7 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
             (if (and resp (alist-get 'id resp))
                 (progn
                   (message "code-review-minimal: note %d resolved" note-id)
-                  (with-current-buffer src-buf
-                    (code-review-minimal--gitlab-fetch-comments)))
+                  (funcall on-success))
               (message "code-review-minimal: failed to resolve note %d" note-id)))))))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────

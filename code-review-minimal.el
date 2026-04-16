@@ -3,7 +3,7 @@
 ;; Author: phye
 ;; Version: 0.2.0
 ;; Keywords: tools, vc, review
-;; Package-Requires: ((emacs "27.1"))
+;; Package-Requires: ((emacs "27.1") (ghub "3.6"))
 
 ;;; Commentary:
 ;;
@@ -39,11 +39,10 @@
 
 ;;; Code:
 
-(require 'json)
-(require 'url)
-(require 'url-http)
 (require 'cl-lib)
 (require 'subr-x)
+(require 'ghub)
+(require 'glab)
 
 ;;;; ─── Customisation ────────────────────────────────────────────────────────
 
@@ -350,6 +349,38 @@ BACKEND should be one of: github, gitlab, gongfeng."
      ((string-match "https?://[^/]+/\\([^/]+\\)/\\(.*\\)\\.git$" remote-url)
       (cons (match-string 1 remote-url) (match-string 2 remote-url))))))
 
+(defun code-review-minimal--parse-mr-url (input)
+  "Parse a MR/PR URL or bare integer INPUT.
+Returns a plist with :iid and optionally :backend and :project-info, or nil.
+
+Supported URL formats:
+  GitHub:   https://github.com/OWNER/REPO/pull/IID
+  GitLab:   https://gitlab.com/NS/PROJECT/-/merge_requests/IID
+  Gongfeng: https://git.woa.com/NS/PROJECT/-/merge_requests/IID"
+  (when (and input (not (string-empty-p (string-trim input))))
+    (let ((s (string-trim input)))
+      (cond
+       ;; GitHub: https://HOST/OWNER/REPO/pull[s]/IID
+       ((string-match
+         "https?://\\([^/]*github[^/]*\\)/\\([^/]+\\)/\\([^/]+\\)/pulls?/\\([0-9]+\\)" s)
+        (list :iid          (string-to-number (match-string 4 s))
+              :backend      'github
+              :project-info `((owner . ,(match-string 2 s))
+                              (repo  . ,(match-string 3 s)))))
+       ;; GitLab / Gongfeng: https://HOST/NS/.../REPO/-/merge_requests/IID
+       ((string-match
+         "https?://\\([^/]+\\)/\\(.*\\)/-/merge_requests/\\([0-9]+\\)" s)
+        (let* ((host    (match-string 1 s))
+               (path    (match-string 2 s))
+               (iid     (string-to-number (match-string 3 s)))
+               (backend (code-review-minimal--detect-backend host)))
+          (list :iid          iid
+                :backend      (or backend 'gitlab)
+                :project-info `((project-id . ,(url-hexify-string path))))))
+       ;; Bare integer fallback
+       ((string-match "\\`[0-9]+\\'" s)
+        (list :iid (string-to-number s)))))))
+
 ;;;; ─── Backend Selection ─────────────────────────────────────────────────────
 
 (defun code-review-minimal--ensure-backend ()
@@ -383,75 +414,36 @@ Caches the result per repository."
                     (_ code-review-minimal-gitlab-base-url))))
     (concat base-url "/" (mapconcat #'identity path-segments "/"))))
 
-(defun code-review-minimal--make-auth-headers (backend)
-  "Create authentication headers for BACKEND."
-  (let ((token (code-review-minimal--get-token backend)))
-    (pcase backend
-      ;; GitHub: Bearer token (GitHub Apps) or token (classic PAT)
-      ('github
-       `(,(cons "Authorization" (format "Bearer %s" token))
-         ("Content-Type" . "application/json; charset=utf-8")
-         ("Accept" . "application/vnd.github+json")
-         ("X-GitHub-Api-Version" . "2022-11-28")))
-      ;; GitLab & Gongfeng: PRIVATE-TOKEN header
-      ((or 'gitlab 'gongfeng)
-       `(("PRIVATE-TOKEN" . ,token)
-         ("Content-Type" . "application/json; charset=utf-8"))))))
-
 (defun code-review-minimal--http-request (backend method url &optional payload callback)
-  "Perform async HTTP METHOD request to URL for BACKEND.
-PAYLOAD is JSON-encoded as body. CALLBACK receives parsed JSON."
+  "Perform async HTTP METHOD request to URL for BACKEND via ghub.
+PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
   (code-review-minimal--assert-token backend)
-  (let* ((url-request-method method)
-         (url-request-extra-headers (code-review-minimal--make-auth-headers backend))
-         (url-request-data
-          (when payload
-            (encode-coding-string (json-encode payload) 'utf-8))))
-    (url-retrieve
-     url
-     (lambda (status)
-       (let* ((http-status (code-review-minimal--http-status-code))
-              (err (plist-get status :error))
-              (resp-body (code-review-minimal--response-body)))
-         (cond
-          (err
-           (message "code-review-minimal: HTTP error %S (URL: %s)" err url))
-          ((and http-status (>= http-status 400))
-           (message "code-review-minimal: HTTP %d for %s\n  response: %s"
-                    http-status url
-                    (substring resp-body 0 (min 400 (length resp-body)))))
-          (t
-           (let ((result (code-review-minimal--parse-response)))
-             (when callback
-               (funcall callback result)))))))
-     nil t)))
-
-(defun code-review-minimal--http-status-code ()
-  "Return HTTP status code from url-retrieve buffer."
-  (save-excursion
-    (goto-char (point-min))
-    (when (re-search-forward "HTTP/[0-9.]+ \\([0-9]+\\)" nil t)
-      (string-to-number (match-string 1)))))
-
-(defun code-review-minimal--response-body ()
-  "Return response body from url-retrieve buffer."
-  (save-excursion
-    (goto-char (point-min))
-    (if (re-search-forward "^\\s-*$" nil t)
-        (decode-coding-string (buffer-substring (point) (point-max)) 'utf-8)
-      "")))
-
-(defun code-review-minimal--parse-response ()
-  "Parse JSON from url-retrieve response buffer."
-  (let ((body (code-review-minimal--response-body)))
-    (condition-case err
-        (let ((json-object-type 'alist)
-              (json-array-type 'list)
-              (json-key-type 'symbol))
-          (json-read-from-string body))
-      (error
-       (message "code-review-minimal: JSON parse error: %S" err)
-       nil))))
+  (let* ((token (code-review-minimal--get-token backend))
+         (base-url (pcase backend
+                     ('github   code-review-minimal-github-base-url)
+                     ('gitlab   code-review-minimal-gitlab-base-url)
+                     ('gongfeng code-review-minimal-gongfeng-base-url)))
+         ;; ghub expects host without scheme, e.g. "api.github.com"
+         (host (replace-regexp-in-string "^https?://" "" base-url))
+         ;; ghub expects a resource path, e.g. "/repos/owner/repo/pulls/1/comments"
+         (resource (substring url (length base-url)))
+         ;; :forge 'gitlab makes ghub send PRIVATE-TOKEN header instead of Bearer
+         (forge (pcase backend
+                  ('github nil)
+                  ((or 'gitlab 'gongfeng) 'gitlab)))
+         (wrapped-callback
+          (when callback
+            (lambda (result _headers _status _req)
+              (funcall callback result)))))
+    (ghub-request method resource nil
+                  :auth     token
+                  :host     host
+                  :forge    forge
+                  :payload  payload
+                  :callback wrapped-callback
+                  :errorback
+                  (lambda (err _headers _status _req)
+                    (message "code-review-minimal: HTTP error for %s: %S" url err)))))
 
 ;;;; ─── Utility Functions ─────────────────────────────────────────────────────
 
@@ -993,13 +985,39 @@ If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY."
     found))
 
 ;;;###autoload
-(defun code-review-minimal-set-mr-iid (iid)
-  "Set the MR/PR IID for the current repository."
-  (interactive (list (read-number "New MR/PR IID: " (or code-review-minimal--mr-iid 0))))
-  (setq code-review-minimal--mr-iid iid
-        code-review-minimal--mr-id nil)
-  (code-review-minimal--save-iid iid)
-  (message "code-review-minimal: MR IID set to !%d (persisted)." iid))
+(defun code-review-minimal-review-url (url)
+  "Start a code review session for the MR/PR at URL.
+URL must be a full web URL of a pull/merge request, e.g.:
+  https://git.woa.com/adp/proto-unified/-/merge_requests/856
+  https://github.com/owner/repo/pull/42
+  https://gitlab.com/ns/project/-/merge_requests/7
+
+Automatically detects the backend (github/gitlab/gongfeng), project, and
+MR IID from the URL, then enables `code-review-minimal-mode' and fetches
+inline comments for the current buffer."
+  (interactive (list (read-string "MR/PR URL: ")))
+  (let ((parsed (code-review-minimal--parse-mr-url url)))
+    (unless (and parsed (plist-get parsed :backend))
+      (user-error "code-review-minimal: expected a full MR/PR URL, got: %S" url))
+    (let ((iid      (plist-get parsed :iid))
+          (backend  (plist-get parsed :backend))
+          (projinfo (plist-get parsed :project-info)))
+      ;; Install state before enabling the mode so mode-activation sees it
+      (setq code-review-minimal--mr-iid          iid
+            code-review-minimal--mr-id           nil
+            code-review-minimal--current-backend backend
+            code-review-minimal--project-info    projinfo)
+      (code-review-minimal--save-iid iid)
+      (code-review-minimal--save-backend backend)
+      (code-review-minimal--assert-token backend)
+      (message "code-review-minimal: reviewing !%d on %s [%s]" iid
+               (or (alist-get 'project-id projinfo)
+                   (format "%s/%s" (alist-get 'owner projinfo) (alist-get 'repo projinfo)))
+               backend)
+      ;; Enable mode (which fetches comments) or just refresh if already on
+      (if (bound-and-true-p code-review-minimal-mode)
+          (code-review-minimal--fetch-comments)
+        (code-review-minimal-mode 1)))))
 
 ;;;###autoload
 (defun code-review-minimal-set-backend-for-repo (backend)
@@ -1071,21 +1089,19 @@ Use this to override auto-detection."
 (define-minor-mode code-review-minimal-mode
   "Minor mode for reviewing code inline using overlays.
 
-When enabled, you will be asked for the MR/PR IID; comments targeting
-the current file are fetched and shown inline.
+Typically you start a session with:
+  M-x code-review-minimal-review-url
 
-The backend is auto-detected from the git remote URL:
-  - github.com → GitHub
-  - git.woa.com → Gongfeng
-  - Other gitlab hosts → GitLab
-
-Or set `code-review-minimal-backend' to override auto-detection.
+which accepts a full MR/PR URL, auto-detects the backend, and enables
+this mode.  The mode can also be toggled directly; if no MR is cached it
+will prompt for a URL via `code-review-minimal-review-url'.
 
 Commands:
-  `code-review-minimal-add-comment'     - add comment for selected region
-  `code-review-minimal-edit-comment'    - edit comment at point
-  `code-review-minimal-refresh'         - re-fetch comments
-  `code-review-minimal-resolve-comment' - resolve comment at point
+  `code-review-minimal-review-url'        - start review from a URL (main entry point)
+  `code-review-minimal-add-comment'       - add comment for selected region
+  `code-review-minimal-edit-comment'      - edit comment at point
+  `code-review-minimal-refresh'           - re-fetch comments
+  `code-review-minimal-resolve-comment'   - resolve comment at point
   `code-review-minimal-set-backend-for-repo' - change backend for this repo"
   :lighter " CR"
   :keymap code-review-minimal-mode-map
@@ -1096,16 +1112,17 @@ Commands:
         (message "code-review-minimal: using %s backend" code-review-minimal--current-backend)
         ;; Get token for backend
         (code-review-minimal--assert-token code-review-minimal--current-backend)
-        ;; Get MR IID
+        ;; Get MR IID — if not already set via review-url, ask for a URL now
         (unless code-review-minimal--mr-iid
           (let ((cached (code-review-minimal--load-cached-iid)))
             (if cached
                 (progn
                   (setq code-review-minimal--mr-iid cached)
                   (message "code-review-minimal: using cached MR IID !%d" cached))
-              (let ((iid (read-number "MR/PR IID to review (integer in URL): ")))
-                (setq code-review-minimal--mr-iid iid)
-                (code-review-minimal--save-iid iid)))))
+              (call-interactively #'code-review-minimal-review-url)
+              ;; review-url already fetches comments and handles the rest; bail out
+              (setq code-review-minimal-mode nil)
+              (cl-return-from nil))))
         ;; Fetch comments
         (code-review-minimal--fetch-comments))
     ;; Disable

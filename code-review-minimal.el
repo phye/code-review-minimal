@@ -12,28 +12,40 @@
 ;; and Gongfeng (Tencent GitLab) MRs.
 ;;
 ;; Quick start:
-;;   1. Configure authentication:
-;;      - GitHub: Set `code-review-minimal-github-token'
-;;      - GitLab/Gongfeng: Set `code-review-minimal-gitlab-token'
+;;   1. Add an entry to ~/.authinfo (or ~/.authinfo.gpg) for each forge you use:
+;;        machine api.github.com  login ^crm password <github-token>
+;;        machine gitlab.com      login ^crm password <gitlab-token>
+;;        machine git.woa.com     login ^crm password <gongfeng-token>
+;;      The `^crm' login distinguishes these entries from tokens used by other
+;;      Emacs forge tools (e.g. Magit/ghub use `^').
+;;      The host is taken from `code-review-minimal-*-base-url', so GitHub
+;;      Enterprise and self-hosted GitLab instances work automatically by
+;;      setting the appropriate base-URL custom variable.
 ;;
-;;   2. Open any file that belongs to a tracked project, then:
-;;        M-x code-review-minimal-mode
-;;      The backend is auto-detected from the git remote URL.
+;;   2. Start a review session from a PR/MR web URL:
+;;        M-x code-review-minimal-review-url
+;;      The backend (github/gitlab/gongfeng) is auto-detected from the URL host
+;;      and the git remote.  Inline comment overlays are rendered immediately.
 ;;
-;;   3. To add a new comment, select a region, then:
+;;   3. To post a new comment, select a region and run:
 ;;        M-x code-review-minimal-add-comment
 ;;      An overlay input area opens beneath the selection.
 ;;      Type your comment and press C-c C-c to submit, or C-c C-k to cancel.
 ;;
 ;; Supported backends:
 ;;   - github    : github.com and GitHub Enterprise
-;;   - gitlab    : gitlab.com and self-hosted GitLab
-;;   - gongfeng  : git.woa.com (Tencent GitLab, API v3)
+;;                 HTTP: ghub (Authorization: Bearer <token>)
+;;   - gitlab    : gitlab.com and self-hosted GitLab (API v4)
+;;                 HTTP: ghub with :forge 'gitlab (PRIVATE-TOKEN header)
+;;   - gongfeng  : git.woa.com — Tencent's internal GitLab (API v3)
+;;                 HTTP: url-retrieve with explicit PRIVATE-TOKEN header
+;;                 (Gongfeng's API v3 is not wire-compatible with GitLab v4)
 ;;
-;; Authentication methods:
-;;   - GitHub   : Personal Access Token via Authorization Bearer header
-;;   - GitLab   : Personal Access Token via PRIVATE-TOKEN header
-;;   - Gongfeng : Private token via PRIVATE-TOKEN header
+;; Backend files:
+;;   code-review-minimal-github.el   — GitHub backend
+;;   code-review-minimal-gitlab.el   — GitLab backend
+;;   code-review-minimal-gongfeng.el — Gongfeng backend
+;;   code-review-minimal-faces.el    — Face definitions (light + dark themes)
 ;;
 ;; License: MIT
 
@@ -41,8 +53,11 @@
 
 (require 'cl-lib)
 (require 'subr-x)
-(require 'ghub)
-(require 'glab)
+(require 'auth-source)
+(require 'code-review-minimal-faces)
+(require 'code-review-minimal-github)
+(require 'code-review-minimal-gitlab)
+(require 'code-review-minimal-gongfeng)
 
 ;;;; ─── Customisation ────────────────────────────────────────────────────────
 
@@ -52,35 +67,27 @@
   :prefix "code-review-minimal-")
 
 (defcustom code-review-minimal-backend nil
-  "Backend to use for code review.
-If nil, auto-detect from git remote URL.
-Valid values: nil (auto), `github', `gitlab', `gongfeng'."
+  "Backend override for code review.
+If nil (the default), the backend is auto-detected from the git remote URL
+and the result is cached per repository.  Only set this when auto-detection
+fails or gives the wrong result for a particular repository.
+
+Valid values: nil (auto), `github', `gitlab', `gongfeng'.
+
+This variable is intended to be set per-repository via a .dir-locals.el file:
+
+  ((nil . ((code-review-minimal-backend . gongfeng))))
+
+It is declared safe for directory-local use so Emacs will not prompt for
+confirmation when the value is one of the known backend symbols."
   :type '(choice (const :tag "Auto-detect" nil)
                  (const :tag "GitHub" github)
                  (const :tag "GitLab" gitlab)
                  (const :tag "Gongfeng (Tencent GitLab)" gongfeng))
   :group 'code-review-minimal)
 
-;; Token configuration (per-backend)
-(defcustom code-review-minimal-github-token nil
-  "GitHub personal access token.
-Create one at: https://github.com/settings/tokens
-Required scopes: repo (for private repos), public_repo (for public repos)"
-  :type '(choice (const :tag "Not set" nil) (string :tag "Token"))
-  :group 'code-review-minimal)
-
-(defcustom code-review-minimal-gitlab-token nil
-  "GitLab personal access token.
-Create one at: GitLab UI → User Settings → Access Tokens
-Required scopes: api (for full access) or read_api + read_repository + write_repository"
-  :type '(choice (const :tag "Not set" nil) (string :tag "Token"))
-  :group 'code-review-minimal)
-
-(defcustom code-review-minimal-gongfeng-token nil
-  "Gongfeng (git.woa.com) private token.
-Create one at: Gongfeng UI → User Settings → Access Tokens"
-  :type '(choice (const :tag "Not set" nil) (string :tag "Token"))
-  :group 'code-review-minimal)
+(put 'code-review-minimal-backend 'safe-local-variable
+     (lambda (v) (memq v '(nil github gitlab gongfeng))))
 
 ;; API base URLs
 (defcustom code-review-minimal-github-base-url "https://api.github.com"
@@ -98,69 +105,6 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
 (defcustom code-review-minimal-gongfeng-base-url "https://git.woa.com/api/v3"
   "Base URL for Gongfeng API."
   :type 'string
-  :group 'code-review-minimal)
-
-;; Legacy backward compatibility (for gf-code-review users)
-(defcustom code-review-minimal-private-token nil
-  "Deprecated. Use `code-review-minimal-gongfeng-token' instead."
-  :type '(choice (const :tag "Not set" nil) (string :tag "Token"))
-  :group 'code-review-minimal)
-
-(defcustom code-review-minimal-base-url code-review-minimal-gongfeng-base-url
-  "Deprecated. Use `code-review-minimal-gongfeng-base-url' instead."
-  :type 'string
-  :group 'code-review-minimal)
-
-(defcustom code-review-minimal-comment-face 'code-review-minimal-comment-face
-  "Face used for comment overlay text."
-  :type 'face
-  :group 'code-review-minimal)
-
-;;;; ─── Faces ─────────────────────────────────────────────────────────────────
-
-(defface code-review-minimal-comment-face
-  '((((background dark))
-     :background "#2a2a4a"
-     :foreground "#a0c8ff"
-     :box (:line-width 1 :color "#5080c0")
-     :extend t)
-    (t :background "#eef4ff" :foreground "#2040a0" :box (:line-width 1 :color "#8090c0") :extend t))
-  "Face for displaying fetched CR comments."
-  :group 'code-review-minimal)
-
-(defface code-review-minimal-resolved-face
-  '((((background dark)) :foreground "#60c060" :weight bold) (t :foreground "#207020" :weight bold))
-  "Face for the resolved status indicator in a comment overlay."
-  :group 'code-review-minimal)
-
-(defface code-review-minimal-unresolved-face
-  '((((background dark)) :foreground "#60a8ff" :weight bold) (t :foreground "#1040c0" :weight bold))
-  "Face for the unresolved/open status indicator in a comment overlay."
-  :group 'code-review-minimal)
-
-(defface code-review-minimal-resolved-body-face
-  '((((background dark))
-     :background "#1a3a1a"
-     :foreground "#80c080"
-     :box (:line-width 1 :color "#40a040")
-     :extend t)
-    (t :background "#eeffee" :foreground "#205020" :box (:line-width 1 :color "#60a060") :extend t))
-  "Face for the body lines of a resolved CR comment overlay."
-  :group 'code-review-minimal)
-
-(defface code-review-minimal-input-face
-  '((((background dark))
-     :background "#2a3a2a"
-     :foreground "#a0ffa0"
-     :box (:line-width 1 :color "#50a050")
-     :extend t)
-    (t :background "#f0fff0" :foreground "#205020" :box (:line-width 1 :color "#70a070") :extend t))
-  "Face for the comment-input overlay."
-  :group 'code-review-minimal)
-
-(defface code-review-minimal-header-face
-  '((((background dark)) :foreground "#80c0ff" :weight bold) (t :foreground "#1040c0" :weight bold))
-  "Face for the header line inside a comment overlay."
   :group 'code-review-minimal)
 
 ;;;; ─── Backend Detection ─────────────────────────────────────────────────────
@@ -270,39 +214,52 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
 
 ;;;; ─── Token Management ──────────────────────────────────────────────────────
 
+(defun code-review-minimal--authinfo-token (host)
+  "Look up a token for HOST in authinfo/netrc via `auth-source'.
+Returns the secret string, or nil if not found.
+Uses login `^crm' (Code-Review-Minimal) to distinguish these entries from
+tokens used by other Emacs forge tools (e.g. Magit/ghub use login `^')."
+  (let ((found (or (car (auth-source-search :host host :user "^crm" :max 1))
+                   (car (auth-source-search :host host :max 1)))))
+    (when found
+      (let ((secret (plist-get found :secret)))
+        (if (functionp secret) (funcall secret) secret))))) matching :host entry with :user \"^\" (the
+conventional forge/ghub convention) or any user."
+  (let ((found (or (car (auth-source-search :host host :user "^" :max 1))
+                   (car (auth-source-search :host host :max 1)))))
+    (when found
+      (let ((secret (plist-get found :secret)))
+        (if (functionp secret) (funcall secret) secret)))))
+
 (defun code-review-minimal--get-token (backend)
-  "Get the authentication token for BACKEND."
-  (pcase backend
-    ('github code-review-minimal-github-token)
-    ('gitlab code-review-minimal-gitlab-token)
-    ('gongfeng (or code-review-minimal-gongfeng-token code-review-minimal-private-token))
-    (_ nil)))
-
-;;;###autoload
-(defun code-review-minimal-set-token (backend token)
-  "Interactively set authentication TOKEN for BACKEND.
-BACKEND should be one of: github, gitlab, gongfeng."
-  (interactive (list (intern (completing-read "Backend: " '("github" "gitlab" "gongfeng")))
-                     (read-string "Token: ")))
-  (pcase backend
-    ('github (setq code-review-minimal-github-token token))
-    ('gitlab (setq code-review-minimal-gitlab-token token))
-    ('gongfeng (setq code-review-minimal-gongfeng-token token))
-    (_ (user-error "Unknown backend: %s" backend)))
-  (message "code-review-minimal: token set for %s." backend))
-
-;; Keep old function for backward compatibility
-;;;###autoload
-(defun code-review-minimal-set-gongfeng-token (token)
-  "Set Gongfeng token (backward compatible alias)."
-  (interactive (list (read-string "Gongfeng private token: " code-review-minimal-gongfeng-token)))
-  (code-review-minimal-set-token 'gongfeng token))
+  "Get the authentication token for BACKEND from authinfo/netrc.
+The host is derived from the backend's API base-URL custom variable,
+so GitHub Enterprise and self-hosted GitLab instances are supported
+automatically."
+  (code-review-minimal--authinfo-token
+   (replace-regexp-in-string
+    "^https?://\\([^/]+\\).*" "\\1"
+    (pcase backend
+      ('github   code-review-minimal-github-base-url)
+      ('gitlab   code-review-minimal-gitlab-base-url)
+      ('gongfeng code-review-minimal-gongfeng-base-url)
+      (_ (error "Unknown backend: %s" backend))))))
 
 (defun code-review-minimal--assert-token (backend)
-  "Signal an error if no token is configured for BACKEND."
-  (unless (and (code-review-minimal--get-token backend)
-               (not (string-empty-p (code-review-minimal--get-token backend))))
-    (user-error "code-review-minimal: Please set your %s token via M-x code-review-minimal-set-token" backend)))
+  "Signal an error if no token is found in authinfo for BACKEND."
+  (unless (let ((tok (code-review-minimal--get-token backend)))
+            (and tok (not (string-empty-p tok))))
+    (user-error
+     "code-review-minimal: No token found for %s.  \
+Add an entry to ~/.authinfo (or ~/.authinfo.gpg), e.g.:\n  machine %s login ^crm password <token>"
+     backend
+     (replace-regexp-in-string
+      "^https?://\\([^/]+\\).*" "\\1"
+      (pcase backend
+        ('github   code-review-minimal-github-base-url)
+        ('gitlab   code-review-minimal-gitlab-base-url)
+        ('gongfeng code-review-minimal-gongfeng-base-url)
+        (_ "unknown-host"))))))
 
 ;;;; ─── Remote Parsing ────────────────────────────────────────────────────────
 
@@ -312,42 +269,6 @@ BACKEND should be one of: github, gitlab, gongfeng."
          (or (locate-dominating-file (or buffer-file-name default-directory) ".git")
              default-directory)))
     (string-trim (shell-command-to-string "git remote get-url origin 2>/dev/null"))))
-
-;; GitLab/Gongfeng: extract namespace/project from remote URL
-(defun code-review-minimal--parse-gitlab-project-path (remote-url)
-  "Extract namespace/project from REMOTE-URL (ssh or https)."
-  (when remote-url
-    (cond
-     ;; SSH: git@host:namespace/project.git
-     ((string-match "git@[^:]+:\\(.*\\)\\.git$" remote-url)
-      (match-string 1 remote-url))
-     ;; HTTPS: https://host/namespace/project.git
-     ((string-match "https?://[^/]+/\\(.*\\)\\.git$" remote-url)
-      (match-string 1 remote-url))
-     ;; HTTPS without .git suffix
-     ((string-match "https?://[^/]+/\\(.*[^/]\\)/*$" remote-url)
-      (match-string 1 remote-url)))))
-
-;; GitHub: extract owner/repo from remote URL
-(defun code-review-minimal--parse-github-repo (remote-url)
-  "Parse GitHub REMOTE-URL to get (owner . repo)."
-  (when remote-url
-    (cond
-     ;; SSH: git@github.com:owner/repo.git
-     ((string-match "git@github\\.com:\\([^/]+\\)/\\(.*\\)\\.git$" remote-url)
-      (cons (match-string 1 remote-url) (match-string 2 remote-url)))
-     ;; HTTPS: https://github.com/owner/repo.git
-     ((string-match "https?://github\\.com/\\([^/]+\\)/\\(.*\\)\\.git$" remote-url)
-      (cons (match-string 1 remote-url) (match-string 2 remote-url)))
-     ;; Without .git suffix
-     ((string-match "https?://github\\.com/\\([^/]+\\)/\\([^/]+\\)/?$" remote-url)
-      (cons (match-string 1 remote-url) (match-string 2 remote-url)))
-     ;; GitHub Enterprise SSH
-     ((string-match "git@[^:]+:\\([^/]+\\)/\\(.*\\)\\.git$" remote-url)
-      (cons (match-string 1 remote-url) (match-string 2 remote-url)))
-     ;; GitHub Enterprise HTTPS
-     ((string-match "https?://[^/]+/\\([^/]+\\)/\\(.*\\)\\.git$" remote-url)
-      (cons (match-string 1 remote-url) (match-string 2 remote-url))))))
 
 (defun code-review-minimal--parse-mr-url (input)
   "Parse a MR/PR URL or bare integer INPUT.
@@ -375,7 +296,7 @@ Supported URL formats:
                (iid     (string-to-number (match-string 3 s)))
                (backend (code-review-minimal--detect-backend host)))
           (list :iid          iid
-                :backend      (or backend 'gitlab)
+                :backend      backend   ; nil when host is unknown; --ensure-backend will handle it
                 :project-info `((project-id . ,(url-hexify-string path))))))
        ;; Bare integer fallback
        ((string-match "\\`[0-9]+\\'" s)
@@ -402,48 +323,6 @@ Caches the result per repository."
                 (message "code-review-minimal: auto-detected %s backend from remote" backend))
             (user-error "code-review-minimal: Cannot detect backend from remote: %s. Please set `code-review-minimal-backend'" remote))))))
   code-review-minimal--current-backend)
-
-;;;; ─── HTTP Helpers ──────────────────────────────────────────────────────────
-
-(defun code-review-minimal--api-url (backend &rest path-segments)
-  "Build a full API URL for BACKEND by joining PATH-SEGMENTS."
-  (let ((base-url (pcase backend
-                    ('github code-review-minimal-github-base-url)
-                    ('gitlab code-review-minimal-gitlab-base-url)
-                    ('gongfeng code-review-minimal-gongfeng-base-url)
-                    (_ code-review-minimal-gitlab-base-url))))
-    (concat base-url "/" (mapconcat #'identity path-segments "/"))))
-
-(defun code-review-minimal--http-request (backend method url &optional payload callback)
-  "Perform async HTTP METHOD request to URL for BACKEND via ghub.
-PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
-  (code-review-minimal--assert-token backend)
-  (let* ((token (code-review-minimal--get-token backend))
-         (base-url (pcase backend
-                     ('github   code-review-minimal-github-base-url)
-                     ('gitlab   code-review-minimal-gitlab-base-url)
-                     ('gongfeng code-review-minimal-gongfeng-base-url)))
-         ;; ghub expects host without scheme, e.g. "api.github.com"
-         (host (replace-regexp-in-string "^https?://" "" base-url))
-         ;; ghub expects a resource path, e.g. "/repos/owner/repo/pulls/1/comments"
-         (resource (substring url (length base-url)))
-         ;; :forge 'gitlab makes ghub send PRIVATE-TOKEN header instead of Bearer
-         (forge (pcase backend
-                  ('github nil)
-                  ((or 'gitlab 'gongfeng) 'gitlab)))
-         (wrapped-callback
-          (when callback
-            (lambda (result _headers _status _req)
-              (funcall callback result)))))
-    (ghub-request method resource nil
-                  :auth     token
-                  :host     host
-                  :forge    forge
-                  :payload  payload
-                  :callback wrapped-callback
-                  :errorback
-                  (lambda (err _headers _status _req)
-                    (message "code-review-minimal: HTTP error for %s: %S" url err)))))
 
 ;;;; ─── Utility Functions ─────────────────────────────────────────────────────
 
@@ -472,315 +351,6 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
   "Remove all comment overlays."
   (mapc #'delete-overlay code-review-minimal--overlays)
   (setq code-review-minimal--overlays nil))
-
-;;;; ─── Backend: GitLab/Gongfeng (Shared API) ─────────────────────────────────
-
-(defun code-review-minimal--gitlab-ensure-project-id ()
-  "Set project ID from remote for GitLab/Gongfeng backend."
-  (unless (alist-get 'project-id code-review-minimal--project-info)
-    (let* ((remote (code-review-minimal--git-remote-url))
-           (path (code-review-minimal--parse-gitlab-project-path remote)))
-      (if path
-          (progn
-            (message "code-review-minimal: detected project %s" path)
-            (setq code-review-minimal--project-info
-                  `((project-id . ,(url-hexify-string path)))))
-        (let ((manual (read-string "Project path (e.g. team/project): ")))
-          (setq code-review-minimal--project-info
-                `((project-id . ,(url-hexify-string manual))))))))
-  (alist-get 'project-id code-review-minimal--project-info))
-
-(defun code-review-minimal--gitlab-resolve-mr-id (callback)
-  "Resolve MR id and call CALLBACK with it (GitLab/Gongfeng)."
-  (if code-review-minimal--mr-id
-      (funcall callback code-review-minimal--mr-id)
-    (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-           (url (code-review-minimal--api-url
-                 code-review-minimal--current-backend
-                 "projects" project-id "merge_request" "iid"
-                 (number-to-string code-review-minimal--mr-iid)))
-           (buf (current-buffer)))
-      (message "code-review-minimal: resolving MR id for IID %d ..." code-review-minimal--mr-iid)
-      (code-review-minimal--http-request
-       code-review-minimal--current-backend
-       "GET" url nil
-       (lambda (mr)
-         (let ((mr-id (and mr (alist-get 'id mr))))
-           (if (not (numberp mr-id))
-               (message "code-review-minimal: failed to resolve MR id")
-             (with-current-buffer buf
-               (setq code-review-minimal--mr-id mr-id))
-             (funcall callback mr-id))))))))
-
-;;;; ─── Backend: GitLab/Gongfeng - Fetch Comments ─────────────────────────────
-
-(defun code-review-minimal--gitlab-fetch-comments ()
-  "Fetch MR comments and render overlays (GitLab/Gongfeng)."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-         (mr-iid code-review-minimal--mr-iid)
-         (rel-path (code-review-minimal--relative-file-path))
-         (buf (current-buffer)))
-    (message "code-review-minimal: fetching comments for MR !%d ..." mr-iid)
-    (code-review-minimal--gitlab-resolve-mr-id
-     (lambda (mr-id)
-       (let ((url (concat
-                   (code-review-minimal--api-url
-                    code-review-minimal--current-backend
-                    "projects" project-id "merge_requests"
-                    (number-to-string mr-id) "notes")
-                   "?per_page=100")))
-         (code-review-minimal--http-request
-          code-review-minimal--current-backend
-          "GET" url nil
-          (lambda (notes)
-            (with-current-buffer buf
-              (code-review-minimal--clear-overlays)
-              (if (null notes)
-                  (message "code-review-minimal: no comments found")
-                (code-review-minimal--gitlab-process-notes notes rel-path))))))))))
-
-(defun code-review-minimal--gitlab-process-notes (notes rel-path)
-  "Process GitLab/Gongfeng NOTES and create overlays for REL-PATH."
-  (let* ((total (length notes))
-         (count 0)
-         (by-id (make-hash-table))
-         (children (make-hash-table))
-         (roots nil))
-    ;; Index notes: separate roots from replies
-    (dolist (n notes)
-      (let ((id (alist-get 'id n))
-            (pid (alist-get 'parent_id n)))
-        (puthash id n by-id)
-        (if pid
-            (puthash pid (append (gethash pid children) (list n)) children)
-          (push n roots))))
-    ;; Reverse for natural order (newest first from API)
-    (setq roots (nreverse roots))
-    ;; Render threads
-    (dolist (root roots)
-      (let* ((file-path (alist-get 'file_path root))
-             (note-pos (alist-get 'note_position root))
-             (latest-pos (and note-pos (alist-get 'latest_position note-pos)))
-             (line-num (and latest-pos
-                            (or (alist-get 'right_line_num latest-pos)
-                                (alist-get 'left_line_num latest-pos))))
-             (resolve-state (alist-get 'resolve_state root))
-             (resolved (cond ((eql resolve-state 2) t)
-                            ((eql resolve-state 1) :json-false)
-                            (t nil)))
-             (root-id (alist-get 'id root))
-             (thread (cons root (gethash root-id children))))
-        (when (and (integerp line-num)
-                   file-path
-                   rel-path
-                   (string= file-path rel-path))
-          (code-review-minimal--insert-discussion-overlay line-num thread resolved root-id)
-          (cl-incf count))))
-    (message "code-review-minimal: %d thread(s) in this file, %d total notes." count total)))
-
-;;;; ─── Backend: GitLab/Gongfeng - Post/Update/Resolve ────────────────────────
-
-(defun code-review-minimal--gitlab-post-comment (_beg end body)
-  "Post comment on line at END with BODY (GitLab/Gongfeng)."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-         (mr-iid code-review-minimal--mr-iid)
-         (rel-path (code-review-minimal--relative-file-path))
-         (end-line (code-review-minimal--line-number-at end))
-         (src-buf (current-buffer)))
-    (code-review-minimal--gitlab-resolve-mr-id
-     (lambda (mr-id)
-       (let* ((url (code-review-minimal--api-url
-                    code-review-minimal--current-backend
-                    "projects" project-id "merge_requests"
-                    (number-to-string mr-id) "notes"))
-              (payload `((body . ,body)
-                         (path . ,rel-path)
-                         (line . ,(number-to-string end-line))
-                         (line_type . "new"))))
-         (code-review-minimal--http-request
-          code-review-minimal--current-backend
-          "POST" url payload
-          (lambda (resp)
-            (if (and resp (alist-get 'id resp))
-                (progn
-                  (message "code-review-minimal: comment posted (id=%s)" (alist-get 'id resp))
-                  (with-current-buffer src-buf
-                    (code-review-minimal--gitlab-fetch-comments)))
-              (message "code-review-minimal: failed to post comment")))))))))
-
-(defun code-review-minimal--gitlab-update-comment (note-id body)
-  "Update NOTE-ID with BODY (GitLab/Gongfeng)."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-         (src-buf (current-buffer)))
-    (code-review-minimal--gitlab-resolve-mr-id
-     (lambda (mr-id)
-       (let* ((url (code-review-minimal--api-url
-                    code-review-minimal--current-backend
-                    "projects" project-id "merge_requests"
-                    (number-to-string mr-id) "notes" (number-to-string note-id)))
-              (payload `((body . ,body))))
-         (code-review-minimal--http-request
-          code-review-minimal--current-backend
-          "PUT" url payload
-          (lambda (resp)
-            (if (and resp (alist-get 'id resp))
-                (progn
-                  (message "code-review-minimal: note %d updated" note-id)
-                  (with-current-buffer src-buf
-                    (code-review-minimal--gitlab-fetch-comments)))
-              (message "code-review-minimal: failed to update note %d" note-id)))))))))
-
-(defun code-review-minimal--gitlab-resolve-comment (ov)
-  "Resolve comment at overlay OV (GitLab/Gongfeng)."
-  (let ((note-id (overlay-get ov 'code-review-minimal-note-id))
-        (note-body (overlay-get ov 'code-review-minimal-body))
-        (project-id (code-review-minimal--gitlab-ensure-project-id))
-        (src-buf (current-buffer)))
-    (code-review-minimal--gitlab-resolve-mr-id
-     (lambda (mr-id)
-       (let ((url (code-review-minimal--api-url
-                   code-review-minimal--current-backend
-                   "projects" project-id "merge_requests"
-                   (number-to-string mr-id) "notes" (number-to-string note-id))))
-         (code-review-minimal--http-request
-          code-review-minimal--current-backend
-          "PUT" url
-          `((body . ,note-body) (resolve_state . 2))
-          (lambda (resp)
-            (if (and resp (alist-get 'id resp))
-                (progn
-                  (message "code-review-minimal: note %d resolved" note-id)
-                  (with-current-buffer src-buf
-                    (code-review-minimal--gitlab-fetch-comments)))
-              (message "code-review-minimal: failed to resolve note %d" note-id)))))))))
-
-;;;; ─── Backend: GitHub ───────────────────────────────────────────────────────
-
-(defun code-review-minimal--github-ensure-project-info ()
-  "Set project info from remote for GitHub backend."
-  (unless (alist-get 'owner code-review-minimal--project-info)
-    (let* ((remote (code-review-minimal--git-remote-url))
-           (parsed (code-review-minimal--parse-github-repo remote)))
-      (if parsed
-          (progn
-            (message "code-review-minimal: detected repo %s/%s" (car parsed) (cdr parsed))
-            (setq code-review-minimal--project-info
-                  `((owner . ,(car parsed))
-                    (repo . ,(cdr parsed)))))
-        (let ((owner (read-string "GitHub owner/organization: "))
-              (repo (read-string "GitHub repository name: ")))
-          (setq code-review-minimal--project-info
-                `((owner . ,owner)
-                  (repo . ,repo))))))))
-
-(defun code-review-minimal--github-fetch-comments ()
-  "Fetch PR comments and render overlays (GitHub)."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid)
-         (rel-path (code-review-minimal--relative-file-path))
-         (buf (current-buffer)))
-    (message "code-review-minimal: fetching comments for PR #%d ..." pr-number)
-    ;; GitHub PR review comments endpoint
-    (let ((url (code-review-minimal--api-url
-                'github
-                "repos" owner repo "pulls" (number-to-string pr-number) "comments")))
-      (code-review-minimal--http-request
-       'github
-       "GET" url nil
-       (lambda (comments)
-         (with-current-buffer buf
-           (code-review-minimal--clear-overlays)
-           (code-review-minimal--github-process-comments comments rel-path)))))))
-
-(defun code-review-minimal--github-process-comments (comments rel-path)
-  "Process GitHub COMMENTS and create overlays for REL-PATH."
-  (let ((count 0))
-    (dolist (c comments)
-      (let ((path (alist-get 'path c))
-            (line (alist-get 'line c))
-            (body (alist-get 'body c))
-            (id (alist-get 'id c))
-            (user (alist-get 'login (alist-get 'user c)))
-            (created (alist-get 'created_at c)))
-        (when (and path line (string= path rel-path))
-          (let* ((note `((author . ((name . ,user)))
-                         (body . ,body)
-                         (created_at . ,created)))
-                 (thread (list note)))
-            (code-review-minimal--insert-discussion-overlay line thread nil id)
-            (cl-incf count)))))
-    (message "code-review-minimal: %d comment(s) in this file" count)))
-
-(defun code-review-minimal--github-post-comment (_beg end body)
-  "Post review comment on line at END with BODY (GitHub).
-Note: GitHub requires the commit SHA for PR review comments."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid)
-         (rel-path (code-review-minimal--relative-file-path))
-         (line (code-review-minimal--line-number-at end))
-         (src-buf (current-buffer)))
-    ;; First, get the PR head commit SHA
-    (let ((pr-url (code-review-minimal--api-url
-                   'github
-                   "repos" owner repo "pulls" (number-to-string pr-number))))
-      (code-review-minimal--http-request
-       'github
-       "GET" pr-url nil
-       (lambda (pr-data)
-         (let ((head-sha (alist-get 'sha (alist-get 'head pr-data))))
-           (if (not head-sha)
-               (message "code-review-minimal: failed to get PR head commit")
-             ;; Post the review comment
-             (let ((url (code-review-minimal--api-url
-                         'github
-                         "repos" owner repo "pulls" (number-to-string pr-number) "comments"))
-                   (payload `((body . ,body)
-                              (path . ,rel-path)
-                              (line . ,line)
-                              (side . "RIGHT")
-                              (commit_id . ,head-sha))))
-               (code-review-minimal--http-request
-                'github
-                "POST" url payload
-                (lambda (resp)
-                  (if (and resp (alist-get 'id resp))
-                      (progn
-                        (message "code-review-minimal: comment posted (id=%s)" (alist-get 'id resp))
-                        (with-current-buffer src-buf
-                          (code-review-minimal--github-fetch-comments)))
-                    (message "code-review-minimal: failed to post comment"))))))))))))
-
-(defun code-review-minimal--github-update-comment (note-id body)
-  "Update NOTE-ID with BODY (GitHub).
-Note: GitHub uses PATCH to update PR review comments."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (src-buf (current-buffer))
-         ;; GitHub review comments use a different endpoint
-         (url (code-review-minimal--api-url
-               'github
-               "repos" owner repo "pulls" "comments" (number-to-string note-id))))
-    (code-review-minimal--http-request
-     'github
-     "PATCH" url `((body . ,body))
-     (lambda (resp)
-       (if (and resp (alist-get 'id resp))
-           (progn
-             (message "code-review-minimal: comment %d updated" note-id)
-             (with-current-buffer src-buf
-               (code-review-minimal--github-fetch-comments)))
-         (message "code-review-minimal: failed to update comment %d" note-id))))))
-
-(defun code-review-minimal--github-resolve-comment (_ov)
-  "Resolve comment overlay OV (GitHub).
-Note: GitHub doesn't have a direct API to 'resolve' review comments.
-Resolution is done through the web UI or by marking conversations as resolved."
-  (message "code-review-minimal: GitHub review comments are resolved via the web interface"))
 
 ;;;; ─── Overlay Rendering ─────────────────────────────────────────────────────
 
@@ -948,29 +518,33 @@ If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY."
 (defun code-review-minimal--fetch-comments ()
   "Fetch comments using current backend."
   (pcase code-review-minimal--current-backend
-    ('github (code-review-minimal--github-fetch-comments))
-    ((or 'gitlab 'gongfeng) (code-review-minimal--gitlab-fetch-comments))
+    ('github   (code-review-minimal--github-fetch-comments))
+    ('gitlab   (code-review-minimal--gitlab-fetch-comments))
+    ('gongfeng (code-review-minimal--gongfeng-fetch-comments))
     (_ (error "Unknown backend: %s" code-review-minimal--current-backend))))
 
 (defun code-review-minimal--post-comment (beg end body)
   "Post comment using current backend."
   (pcase code-review-minimal--current-backend
-    ('github (code-review-minimal--github-post-comment beg end body))
-    ((or 'gitlab 'gongfeng) (code-review-minimal--gitlab-post-comment beg end body))
+    ('github   (code-review-minimal--github-post-comment beg end body))
+    ('gitlab   (code-review-minimal--gitlab-post-comment beg end body))
+    ('gongfeng (code-review-minimal--gongfeng-post-comment beg end body))
     (_ (error "Unknown backend: %s" code-review-minimal--current-backend))))
 
 (defun code-review-minimal--update-comment (note-id body)
   "Update comment using current backend."
   (pcase code-review-minimal--current-backend
-    ('github (code-review-minimal--github-update-comment note-id body))
-    ((or 'gitlab 'gongfeng) (code-review-minimal--gitlab-update-comment note-id body))
+    ('github   (code-review-minimal--github-update-comment note-id body))
+    ('gitlab   (code-review-minimal--gitlab-update-comment note-id body))
+    ('gongfeng (code-review-minimal--gongfeng-update-comment note-id body))
     (_ (error "Unknown backend: %s" code-review-minimal--current-backend))))
 
 (defun code-review-minimal--resolve-comment (ov)
   "Resolve comment using current backend."
   (pcase code-review-minimal--current-backend
-    ('github (code-review-minimal--github-resolve-comment ov))
-    ((or 'gitlab 'gongfeng) (code-review-minimal--gitlab-resolve-comment ov))
+    ('github   (code-review-minimal--github-resolve-comment ov))
+    ('gitlab   (code-review-minimal--gitlab-resolve-comment ov))
+    ('gongfeng (code-review-minimal--gongfeng-resolve-comment ov))
     (_ (error "Unknown backend: %s" code-review-minimal--current-backend))))
 
 ;;;; ─── Public Commands ───────────────────────────────────────────────────────
@@ -997,23 +571,27 @@ MR IID from the URL, then enables `code-review-minimal-mode' and fetches
 inline comments for the current buffer."
   (interactive (list (read-string "MR/PR URL: ")))
   (let ((parsed (code-review-minimal--parse-mr-url url)))
-    (unless (and parsed (plist-get parsed :backend))
+    (unless (and parsed (plist-get parsed :iid))
       (user-error "code-review-minimal: expected a full MR/PR URL, got: %S" url))
     (let ((iid      (plist-get parsed :iid))
           (backend  (plist-get parsed :backend))
           (projinfo (plist-get parsed :project-info)))
-      ;; Install state before enabling the mode so mode-activation sees it
+      ;; Install state before enabling the mode so mode-activation sees it.
+      ;; backend may be nil for unrecognised hosts; --ensure-backend will
+      ;; auto-detect from the git remote in that case.
       (setq code-review-minimal--mr-iid          iid
             code-review-minimal--mr-id           nil
-            code-review-minimal--current-backend backend
             code-review-minimal--project-info    projinfo)
+      (when backend
+        (setq code-review-minimal--current-backend backend)
+        (code-review-minimal--save-backend backend))
       (code-review-minimal--save-iid iid)
-      (code-review-minimal--save-backend backend)
-      (code-review-minimal--assert-token backend)
+      (code-review-minimal--ensure-backend)
+      (code-review-minimal--assert-token code-review-minimal--current-backend)
       (message "code-review-minimal: reviewing !%d on %s [%s]" iid
                (or (alist-get 'project-id projinfo)
                    (format "%s/%s" (alist-get 'owner projinfo) (alist-get 'repo projinfo)))
-               backend)
+               code-review-minimal--current-backend)
       ;; Enable mode (which fetches comments) or just refresh if already on
       (if (bound-and-true-p code-review-minimal-mode)
           (code-review-minimal--fetch-comments)

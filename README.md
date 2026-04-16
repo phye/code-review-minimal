@@ -1,211 +1,264 @@
-# code-review-minimal (WIP)
+# code-review-minimal
 
-NOTE: this is not fully implemented yet.
+> **Note:** Most of the code in this repository was generated with
+> [Claude Code](https://claude.ai/code).
 
-A lightweight Emacs minor mode for performing code review directly inside Emacs against GitHub Pull Requests, GitLab Merge Requests, and Gongfeng (Tencent GitLab) MRs.
+A lightweight Emacs minor mode for performing code review directly inside Emacs
+against GitHub Pull Requests, GitLab Merge Requests, and Gongfeng (Tencent
+GitLab, git.woa.com) MRs.
 
 ## Features
 
-- **Multi-platform support**: Works with GitHub, GitLab, and Gongfeng (git.woa.com)
-- **Auto-detection**: Automatically detects the backend from git remote URL
-- **Overlay-based comments**: Displays review comments as overlays directly in the code
-- **Interactive commenting**: Add comments by selecting a region and submitting
-- **Thread management**: View resolved/unresolved comment threads
-- **Real-time refresh**: Fetch the latest comments from the API
-- **Legacy compatibility**: Maintains backward compatibility with `gf-code-review`
+- **Multi-platform**: GitHub, GitLab, and Gongfeng (git.woa.com)
+- **URL-first entry point**: paste a full MR/PR URL — backend, project, and IID
+  are all parsed automatically
+- **Overlay-based comments**: review comments appear as inline overlays at the
+  correct line numbers
+- **Thread display**: root comments and replies rendered together, resolved
+  threads visually distinguished
+- **Commenting**: select a region, type a comment, `C-c C-c` to submit
+- **Edit & resolve**: edit or resolve existing comments at point
+- **Per-repo caching**: IID and backend are persisted in `.git/` so you don't
+  re-enter them every session
+- **authinfo-only auth**: tokens are read exclusively from `~/.authinfo` — no
+  tokens stored in Emacs variables
+  
+## Comparison with other packages
+
+| | [github-review](https://github.com/charignon/github-review) | [code-review](https://github.com/wandersoncferreira/code-review) | code-review-minimal |
+|---|---|---|---|
+| Platforms | GitHub only | GitHub, GitLab, Gitea | GitHub, GitLab, Gongfeng |
+| Local database | None | Required (closql/forge) | **None** — remote API only |
+| Dependencies | ghub | forge, closql, magit, ... | ghub only |
+| Review interface | Dedicated diff buffer | Dedicated diff buffer | **Inline overlays in your buffer** |
+| Focus | Full PR review (approve, request changes) | Full review workflow | **Commenting on open files only** |
+| Setup | authinfo token | Sync local DB first | Paste a URL and go |
+
+**code-review-minimal** is intentionally narrow in scope:
+
+- **No local database.** All data is fetched live from the remote API on demand.
+  There is nothing to sync, migrate, or corrupt.
+- **No forge/magit dependency.** The only external dependency is `ghub` (for
+  HTTP). You do not need a full Magit setup to use this package.
+- **Works in your buffer.** Comments appear as overlays directly in the file you
+  are editing — no context switching to a separate diff view.
+- **One job.** Open a file, paste an MR/PR URL, see comments inline, post
+  replies. Nothing more.
+
+If you need a full review workflow — diff views, approvals, PR creation — use
+[github-review](https://github.com/charignon/github-review),
+[code-review](https://github.com/wandersoncferreira/code-review), or
+[forge](https://github.com/magit/forge) instead.
+
+## Requirements
+
+- Emacs 27.1+
+- [ghub](https://github.com/magit/ghub) 3.6+ (for GitHub and GitLab backends)
 
 ## Installation
 
-### Manual Installation
+### Manual
 
-1. Clone or download this repository
-2. Add to your Emacs load path:
-   ```elisp
-   (add-to-list 'load-path "/path/to/code-review-minimal")
-   (require 'code-review-minimal)
-   ```
+```elisp
+(add-to-list 'load-path "/path/to/code-review-minimal")
+(require 'code-review-minimal)
+```
 
-### With use-package
+### use-package
 
 ```elisp
 (use-package code-review-minimal
-  :load-path "~/path/to/code-review-minimal"
-  :custom
-  ;; GitHub configuration
-  (code-review-minimal-github-token "your-github-token")
-  ;; OR GitLab configuration
-  (code-review-minimal-gitlab-token "your-gitlab-token")
-  ;; OR Gongfeng configuration
-  (code-review-minimal-gongfeng-token "your-gongfeng-token"))
+  :load-path "~/path/to/code-review-minimal")
 ```
 
-## Configuration
+No token variables to set — see Authentication below.
 
-### Authentication
+## Authentication
 
-You need to set at least one of these tokens based on your platform:
+Tokens are read exclusively from `~/.authinfo` (or `~/.authinfo.gpg`).
+No tokens are stored in Emacs custom variables.
 
-| Platform | Variable | How to create |
-|----------|----------|---------------|
-| GitHub | `code-review-minimal-github-token` | https://github.com/settings/tokens (requires `repo` scope) |
-| GitLab | `code-review-minimal-gitlab-token` | GitLab → User Settings → Access Tokens (requires `api` scope) |
-| Gongfeng | `code-review-minimal-gongfeng-token` | git.woa.com → User Settings → Access Tokens |
+Add one entry per forge host, using `login ^crm` to distinguish these entries
+from tokens used by other Emacs tools (e.g. Magit/ghub use `login ^`):
 
-### Optional Settings
-
-```elisp
-;; Force a specific backend (auto-detected if nil)
-(setq code-review-minimal-backend 'github)  ; or 'gitlab, 'gongfeng
-
-;; Custom API URLs (for GitHub Enterprise or self-hosted GitLab)
-(setq code-review-minimal-github-base-url "https://github.company.com/api/v3")
-(setq code-review-minimal-gitlab-base-url "https://gitlab.company.com/api/v4")
 ```
+machine api.github.com  login ^crm password <github-token>
+machine gitlab.com      login ^crm password <gitlab-token>
+machine git.woa.com     login ^crm password <gongfeng-token>
+```
+
+For self-hosted instances, use the actual hostname, e.g.:
+
+```
+machine gitlab.company.com  login ^crm password <token>
+machine github.company.com  login ^crm password <token>
+```
+
+### Per-user entries (optional)
+
+If you have multiple accounts on the same host, you can scope entries by
+username.  Set the git config key `<backend>.user` globally and use
+`<username>^crm` as the login:
+
+```bash
+git config --global gongfeng.user yourname
+```
+
+```
+machine git.woa.com  login yourname^crm  password <token>
+```
+
+The lookup order for each host is:
+
+1. `login ^crm` — shared entry
+2. `login <git-config-user>^crm` — per-user entry
+3. any login on the host — last-resort fallback
+
+### Token scopes required
+
+| Platform | Required scopes |
+|----------|----------------|
+| GitHub   | `repo` (private repos) or `public_repo` (public only) |
+| GitLab   | `api` |
+| Gongfeng | full access token from git.woa.com → User Settings → Access Tokens |
 
 ## Usage
 
-### Quick Start
+### Quick start
 
-1. Open any file that belongs to a git repository with an MR/PR
-2. Enable the mode: `M-x code-review-minimal-mode`
-3. The backend is auto-detected from the git remote URL
-4. Enter the MR/PR IID when prompted (or it will use cached value)
-5. Comments will be fetched and displayed as overlays
+1. Open any file in a git repository that has an open MR/PR.
+
+2. Run:
+   ```
+   M-x code-review-minimal-review-url
+   ```
+   Paste the full web URL of the MR/PR, e.g.:
+   ```
+   https://git.woa.com/team/project/-/merge_requests/856
+   https://github.com/owner/repo/pull/42
+   https://gitlab.com/ns/project/-/merge_requests/7
+   ```
+   The backend, project, and IID are parsed from the URL automatically.
+   Comments are fetched and displayed immediately as overlays.
+
+3. To review the same MR in another file of the same repo, just enable the mode:
+   ```
+   M-x code-review-minimal-mode
+   ```
+   The cached IID and backend are reused automatically.
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `code-review-minimal-mode` | Toggle code review mode |
-| `code-review-minimal-add-comment` | Add a comment on selected region |
-| `code-review-minimal-edit-comment` | Edit the comment at point |
-| `code-review-minimal-refresh` | Re-fetch and redisplay all comments |
+| `code-review-minimal-review-url` | **Main entry point.** Start a review from a full MR/PR URL |
+| `code-review-minimal-mode` | Toggle the minor mode (uses cached state if available) |
+| `code-review-minimal-add-comment` | Add a comment on the selected region |
+| `code-review-minimal-edit-comment` | Edit the comment overlay at point |
 | `code-review-minimal-resolve-comment` | Mark the comment at point as resolved |
-| `code-review-minimal-set-mr-iid` | Set the MR/PR IID for current repo |
-| `code-review-minimal-set-backend-for-repo` | Override auto-detected backend |
-| `code-review-minimal-set-token` | Interactively set authentication token |
+| `code-review-minimal-refresh` | Re-fetch and redisplay all comments |
+| `code-review-minimal-set-backend-for-repo` | Override the auto-detected backend for this repo |
 
-### Adding Comments
+### Adding a comment
 
-1. Select a region of code (transient mark mode)
-2. Run `M-x code-review-minimal-add-comment`
-3. Type your comment in the overlay that appears
-4. Press `C-c C-c` to submit or `C-c C-k` to cancel
+1. Select a region of code.
+2. `M-x code-review-minimal-add-comment`
+3. An input area opens below the selection. Type your comment.
+4. `C-c C-c` to submit, `C-c C-k` to cancel.
 
-### Managing Threads
+### Editing a comment
 
-- Resolved comments are shown with a green face
-- Unresolved comments are shown with a blue face
-- Use `M-x code-review-minimal-resolve-comment` on a comment line to resolve it
+1. Move point to a line that has a comment overlay.
+2. `M-x code-review-minimal-edit-comment`
+3. Edit the text in the input area, then `C-c C-c`.
 
-### Setting MR/PR IID
+### Resolving a comment
 
-If auto-detection fails or you want to review a specific MR/PR:
-```
-M-x code-review-minimal-set-mr-iid
-```
-This caches the IID per repository in `.git/code-review-minimal-iid`.
+1. Move point to a line that has an unresolved comment overlay.
+2. `M-x code-review-minimal-resolve-comment`
 
-## Supported Platforms
+> **Note:** GitHub does not expose a REST API for resolving review comments.
+> Use the web interface for GitHub repos.
 
-| Platform | Domain | API Version |
-|----------|--------|-------------|
-| GitHub | github.com | REST API v3 |
-| GitHub Enterprise | Custom | REST API v3 |
-| GitLab | gitlab.com | API v4 |
-| Self-hosted GitLab | Custom | API v4 |
-| Gongfeng (工蜂) | git.woa.com | API v3 |
+## Configuration
 
-## Backend Detection
+### Custom API base URLs
 
-The mode automatically detects the backend from the git remote URL:
+For GitHub Enterprise or self-hosted GitLab, override the base URL:
 
 ```elisp
-;; Example remote URLs and their detected backends:
-"https://github.com/user/repo.git"     → github
-"git@github.com:user/repo.git"         → github
-"https://gitlab.com/user/repo.git"     → gitlab
-"https://git.woa.com/user/repo.git"    → gongfeng
+(setq code-review-minimal-github-base-url "https://github.company.com/api/v3")
+(setq code-review-minimal-gitlab-base-url "https://gitlab.company.com/api/v4")
+(setq code-review-minimal-gongfeng-base-url "https://git.company.com/api/v3")
 ```
 
-## Customization
+### Force a backend
+
+Auto-detection reads the git remote URL. To override for a specific repo, add a
+`.dir-locals.el` at the root:
+
+```elisp
+((nil . ((code-review-minimal-backend . gongfeng))))
+```
+
+Or interactively (persists to `.git/code-review-minimal-backend`):
+
+```
+M-x code-review-minimal-set-backend-for-repo
+```
 
 ### Faces
 
-You can customize the appearance of comment overlays:
+All faces have dark- and light-theme variants and are defined in
+`code-review-minimal-faces.el`:
 
-- `code-review-minimal-comment-face` - Default comment overlay
-- `code-review-minimal-resolved-face` - Resolved status indicator
-- `code-review-minimal-unresolved-face` - Unresolved status indicator
-- `code-review-minimal-resolved-body-face` - Resolved comment body
-- `code-review-minimal-input-face` - Comment input overlay
-- `code-review-minimal-header-face` - Comment header line
+| Face | Used for |
+|------|----------|
+| `code-review-minimal-comment-face` | Unresolved comment body |
+| `code-review-minimal-resolved-body-face` | Resolved comment body |
+| `code-review-minimal-input-face` | Comment input overlay |
+| `code-review-minimal-header-face` | Author / date header line |
+| `code-review-minimal-resolved-face` | ✓resolved status indicator |
+| `code-review-minimal-unresolved-face` | ○open status indicator |
 
-### Example Customization
+## Supported platforms
 
-```elisp
-(custom-set-faces
- '(code-review-minimal-comment-face
-   ((t (:background "#fff3cd" :foreground "#856404" :box (:line-width 1 :color "#ffc107"))))))
-```
-
-## Requirements
-
-- Emacs 27.1 or later
-- `json` library (built-in)
-- `url` library (built-in)
-
-## How It Works
-
-1. **Backend Detection**: Parses git remote URL to determine platform (GitHub/GitLab/Gongfeng)
-2. **IID Resolution**: Finds the MR/PR IID by matching current branch against open MRs/PRs
-3. **Comment Fetching**: Retrieves comments via platform's REST API
-4. **Overlay Display**: Renders comments as overlays positioned at the correct line numbers
-5. **Comment Submission**: POSTs new comments back to the API with proper positioning
+| Platform | Domain | API |
+|----------|--------|-----|
+| GitHub | github.com | REST v3 |
+| GitHub Enterprise | custom | REST v3 |
+| GitLab | gitlab.com | REST v4 |
+| Self-hosted GitLab | custom | REST v4 |
+| Gongfeng (工蜂) | git.woa.com | REST v3 (custom) |
 
 ## Troubleshooting
 
-### Comments not showing
+**"No token found" error**
 
-- Ensure your token is set correctly
-- Check that you're on a branch with an open MR/PR
-- Run `M-x code-review-minimal-set-mr-iid` to manually specify the MR/PR number
-- Check `*Messages*` buffer for API errors
-
-### Wrong backend detected
-
-- Set `code-review-minimal-backend` explicitly:
+- Check that your `~/.authinfo` has an entry with the correct hostname and
+  `login ^crm`.
+- Test interactively:
   ```elisp
-  (setq code-review-minimal-backend 'github)
+  (auth-source-search :host "git.woa.com" :user "^crm" :max 1)
   ```
-- Or use `M-x code-review-minimal-set-backend-for-repo` to persist for current repository
+- If you use a per-user entry, verify `git config --global gongfeng.user` is set.
 
-### API errors
+**Wrong backend detected**
 
-- Verify your token has the correct scopes
-- Check network connectivity
-- For GitHub Enterprise/GitLab self-hosted, verify `code-review-minimal-*-base-url` is set correctly
+- Use `M-x code-review-minimal-set-backend-for-repo` to persist the correct
+  backend for the repository.
+- Or set it via `.dir-locals.el` (see Configuration above).
+
+**Comments not showing**
+
+- Confirm the MR/PR URL is correct and the MR is open.
+- Check `*Messages*` for API error details.
+- Try `M-x code-review-minimal-refresh`.
+
+**API errors for self-hosted instances**
+
+- Ensure `code-review-minimal-*-base-url` matches your instance's API root.
 
 ## License
 
-MIT License
-
-Copyright (c) 2024 phye
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+MIT License — Copyright (c) 2024 phye

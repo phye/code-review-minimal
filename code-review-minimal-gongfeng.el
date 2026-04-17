@@ -110,14 +110,20 @@
   "Perform async HTTP METHOD request to Gongfeng URL via url-retrieve.
 PAYLOAD is an alist JSON-encoded as the request body.
 CALLBACK receives the parsed JSON response (or nil on error)."
-  (let* ((token (code-review-minimal--get-token 'gongfeng))
+  (let* ((token (encode-coding-string
+                 (or (code-review-minimal--get-token 'gongfeng) "")
+                 'utf-8))
          (url-request-method method)
          (url-request-extra-headers
           `(("PRIVATE-TOKEN" . ,token)
             ("Content-Type"  . "application/json; charset=utf-8")))
          (url-request-data
           (when payload
-            (encode-coding-string (json-encode payload) 'utf-8))))
+            (let* ((body (json-encode payload))
+                   ;; encode-coding-string produces a unibyte UTF-8 string,
+                   ;; which url-http-create-request requires (Emacs Bug#23750).
+                   (encoded (encode-coding-string body 'utf-8)))
+              encoded))))
     (url-retrieve
      url
      (lambda (status)

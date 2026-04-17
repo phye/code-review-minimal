@@ -203,6 +203,38 @@ GitHub does not provide a REST API for resolving review comments;
 use the web interface instead."
   (message "code-review-minimal: GitHub review comments are resolved via the web interface"))
 
+(defun code-review-minimal--github-reply-comment (note-id body on-success)
+  "Post a reply to the review comment NOTE-ID with BODY (GitHub), then call ON-SUCCESS."
+  (code-review-minimal--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
+         (repo  (alist-get 'repo  code-review-minimal--project-info))
+         (pr-number code-review-minimal--mr-iid)
+         (url (code-review-minimal--github-api-url
+               "repos" owner repo "pulls" (number-to-string pr-number)
+               "comments" (number-to-string note-id) "replies")))
+    (code-review-minimal--github-http-request
+     "POST" url
+     `((body . ,body))
+     (lambda (resp)
+       (if (and resp (alist-get 'id resp))
+           (progn
+             (message "code-review-minimal: reply posted (id=%s)" (alist-get 'id resp))
+             (funcall on-success))
+         (message "code-review-minimal: failed to post reply"))))))
+
+(defun code-review-minimal--github-delete-comment (note-id on-success)
+  "Delete review comment NOTE-ID (GitHub), then call ON-SUCCESS."
+  (code-review-minimal--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
+         (repo  (alist-get 'repo  code-review-minimal--project-info))
+         (url (code-review-minimal--github-api-url
+               "repos" owner repo "pulls" "comments" (number-to-string note-id))))
+    (code-review-minimal--github-http-request
+     "DELETE" url nil
+     (lambda (_resp)
+       (message "code-review-minimal: comment %d deleted" note-id)
+       (funcall on-success)))))
+
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
 (provide 'code-review-minimal-github)

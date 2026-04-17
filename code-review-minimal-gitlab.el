@@ -261,6 +261,39 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
                   (funcall on-success))
               (message "code-review-minimal: failed to resolve note %d" note-id)))))))))
 
+(defun code-review-minimal--gitlab-reply-comment (note-id body on-success)
+  "Post a reply to the thread rooted at NOTE-ID with BODY (GitLab), then call ON-SUCCESS."
+  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id)))
+    (code-review-minimal--gitlab-resolve-mr-id
+     (lambda (mr-id)
+       (let* ((url     (code-review-minimal--gitlab-api-url
+                        "projects" project-id "merge_requests"
+                        (number-to-string mr-id) "notes"))
+              (payload `((body      . ,body)
+                         (parent_id . ,note-id))))
+         (code-review-minimal--gitlab-http-request
+          "POST" url payload
+          (lambda (resp)
+            (if (and resp (alist-get 'id resp))
+                (progn
+                  (message "code-review-minimal: reply posted (id=%s)" (alist-get 'id resp))
+                  (funcall on-success))
+              (message "code-review-minimal: failed to post reply")))))))))
+
+(defun code-review-minimal--gitlab-delete-comment (note-id on-success)
+  "Delete note NOTE-ID (GitLab), then call ON-SUCCESS."
+  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id)))
+    (code-review-minimal--gitlab-resolve-mr-id
+     (lambda (mr-id)
+       (let ((url (code-review-minimal--gitlab-api-url
+                   "projects" project-id "merge_requests"
+                   (number-to-string mr-id) "notes" (number-to-string note-id))))
+         (code-review-minimal--gitlab-http-request
+          "DELETE" url nil
+          (lambda (_resp)
+            (message "code-review-minimal: note %d deleted" note-id)
+            (funcall on-success))))))))
+
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
 (provide 'code-review-minimal-gitlab)

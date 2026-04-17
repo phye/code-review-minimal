@@ -179,21 +179,27 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
      :fetch         code-review-minimal--gongfeng-fetch-comments
      :post          code-review-minimal--gongfeng-post-comment
      :update        code-review-minimal--gongfeng-update-comment
-     :resolve       code-review-minimal--gongfeng-resolve-comment)
+     :resolve       code-review-minimal--gongfeng-resolve-comment
+     :reply         code-review-minimal--gongfeng-reply-comment
+     :delete        code-review-minimal--gongfeng-delete-comment)
     (github
      :api-url-var  code-review-minimal-github-api-url
      :remote-re     "github"
      :fetch         code-review-minimal--github-fetch-comments
      :post          code-review-minimal--github-post-comment
      :update        code-review-minimal--github-update-comment
-     :resolve       code-review-minimal--github-resolve-comment)
+     :resolve       code-review-minimal--github-resolve-comment
+     :reply         code-review-minimal--github-reply-comment
+     :delete        code-review-minimal--github-delete-comment)
     (gitlab
      :api-url-var  code-review-minimal-gitlab-api-url
      :remote-re     "gitlab"
      :fetch         code-review-minimal--gitlab-fetch-comments
      :post          code-review-minimal--gitlab-post-comment
      :update        code-review-minimal--gitlab-update-comment
-     :resolve       code-review-minimal--gitlab-resolve-comment))
+     :resolve       code-review-minimal--gitlab-resolve-comment
+     :reply         code-review-minimal--gitlab-reply-comment
+     :delete        code-review-minimal--gitlab-delete-comment))
   "Alist mapping backend symbols to their configuration and function table.
 
 Each entry has the form (BACKEND-SYMBOL :key value ...).  See the comment
@@ -434,6 +440,26 @@ for each matching thread."
                (with-current-buffer buf
                  (code-review-minimal--fetch-comments))))))
 
+(defun code-review-minimal--reply-comment (note-id body)
+  "Post a reply to the thread rooted at NOTE-ID via the current backend, then re-fetch."
+  (let ((buf (current-buffer)))
+    (funcall (code-review-minimal--backend-prop
+              code-review-minimal--current-backend :reply)
+             note-id body
+             (lambda ()
+               (with-current-buffer buf
+                 (code-review-minimal--fetch-comments))))))
+
+(defun code-review-minimal--delete-comment (note-id)
+  "Delete the comment NOTE-ID via the current backend, then re-fetch."
+  (let ((buf (current-buffer)))
+    (funcall (code-review-minimal--backend-prop
+              code-review-minimal--current-backend :delete)
+             note-id
+             (lambda ()
+               (with-current-buffer buf
+                 (code-review-minimal--fetch-comments))))))
+
 ;;;; ─── Per-repo Cache ─────────────────────────────────────────────────────────
 
 (defvar code-review-minimal--iid-cache (make-hash-table :test 'equal)
@@ -614,9 +640,10 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
     m)
   "Keymap for comment input.")
 
-(defun code-review-minimal--open-input-overlay (beg end &optional edit-note-id initial-body)
+(defun code-review-minimal--open-input-overlay (beg end &optional edit-note-id initial-body reply-note-id)
   "Open inline input overlay below region BEG..END.
-If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY."
+If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY.
+If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
   (when code-review-minimal--input-overlay
     (code-review-minimal--close-input-overlay))
   (let* ((end-pos (save-excursion
@@ -625,8 +652,11 @@ If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY."
          (ov (make-overlay end-pos end-pos nil t nil))
          (ibuf (generate-new-buffer "*code-review-minimal-input*"))
          (editing edit-note-id)
+         (replying reply-note-id)
          (prompt (propertize
-                  (concat (if editing "\n  ┌─ Edit CR comment " "\n  ┌─ New CR comment ")
+                  (concat (cond (editing  "\n  ┌─ Edit CR comment ")
+                                (replying "\n  ┌─ Reply to CR comment ")
+                                (t        "\n  ┌─ New CR comment "))
                           (propertize "(C-c C-c submit, C-c C-k cancel)"
                                       'face '(:weight normal :slant italic))
                           "\n  │ ")
@@ -639,6 +669,8 @@ If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY."
     (overlay-put ov 'code-review-minimal-input-buffer ibuf)
     (when editing
       (overlay-put ov 'code-review-minimal-edit-note-id edit-note-id))
+    (when replying
+      (overlay-put ov 'code-review-minimal-reply-note-id reply-note-id))
     (setq code-review-minimal--input-overlay ov)
     (with-current-buffer ibuf
       (code-review-minimal-input-mode)
@@ -703,9 +735,14 @@ If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY."
              (end (overlay-get ov 'code-review-minimal-region-end))
              (edit-note-id (overlay-get ov 'code-review-minimal-edit-note-id)))
         (with-current-buffer src-buf
-          (if edit-note-id
-              (code-review-minimal--update-comment edit-note-id body)
-            (code-review-minimal--post-comment beg end body))
+          (let ((reply-note-id (overlay-get ov 'code-review-minimal-reply-note-id)))
+            (cond
+             (edit-note-id
+              (code-review-minimal--update-comment edit-note-id body))
+             (reply-note-id
+              (code-review-minimal--reply-comment reply-note-id body))
+             (t
+              (code-review-minimal--post-comment beg end body))))
           (deactivate-mark)))))
   (code-review-minimal--close-input-overlay))
 
@@ -819,6 +856,34 @@ Use this to override auto-detection."
       (code-review-minimal--assert-token code-review-minimal--current-backend)
       (code-review-minimal--resolve-comment ov))))
 
+;;;###autoload
+(defun code-review-minimal-reply-comment ()
+  "Reply to the code review comment thread at point."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (user-error "code-review-minimal: please enable `code-review-minimal-mode' first"))
+  (let ((ov (code-review-minimal--overlay-at-point)))
+    (unless ov
+      (user-error "code-review-minimal: no comment overlay on this line"))
+    (code-review-minimal--assert-token code-review-minimal--current-backend)
+    (let ((note-id (overlay-get ov 'code-review-minimal-note-id))
+          (line    (line-beginning-position)))
+      (code-review-minimal--open-input-overlay line line nil nil note-id))))
+
+;;;###autoload
+(defun code-review-minimal-delete-comment ()
+  "Delete the code review comment at point."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (user-error "code-review-minimal: please enable `code-review-minimal-mode' first"))
+  (let ((ov (code-review-minimal--overlay-at-point)))
+    (unless ov
+      (user-error "code-review-minimal: no comment overlay on this line"))
+    (code-review-minimal--assert-token code-review-minimal--current-backend)
+    (let ((note-id (overlay-get ov 'code-review-minimal-note-id)))
+      (when (yes-or-no-p (format "Delete comment %d? " note-id))
+        (code-review-minimal--delete-comment note-id)))))
+
 ;;;; ─── Minor Mode ────────────────────────────────────────────────────────────
 
 (defvar code-review-minimal-mode-map
@@ -840,6 +905,8 @@ Commands:
   `code-review-minimal-review-url'        - start review from a URL (main entry point)
   `code-review-minimal-add-comment'       - add comment for selected region
   `code-review-minimal-edit-comment'      - edit comment at point
+  `code-review-minimal-reply-comment'     - reply to comment thread at point
+  `code-review-minimal-delete-comment'    - delete comment at point
   `code-review-minimal-refresh'           - re-fetch comments
   `code-review-minimal-resolve-comment'   - resolve comment at point
   `code-review-minimal-set-backend-for-repo' - change backend for this repo"

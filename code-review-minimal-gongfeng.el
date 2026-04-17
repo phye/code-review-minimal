@@ -231,7 +231,11 @@ CALLBACK receives the parsed JSON response (or nil on error)."
                (t
                 nil)))
              (root-id (alist-get 'id root))
-             (thread (cons root (gethash root-id children))))
+             (thread (cons root
+                           (sort (copy-sequence (or (gethash root-id children) '()))
+                                 (lambda (a b)
+                                   (string< (or (alist-get 'created_at a) "")
+                                            (or (alist-get 'created_at b) "")))))))
         (when (and (integerp line-num) file-path)
           (push (list
                  :path file-path

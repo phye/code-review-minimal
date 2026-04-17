@@ -121,6 +121,11 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
   :type 'string
   :group 'code-review-minimal)
 
+(defcustom code-review-minimal-hide-resolved nil
+  "When non-nil, do not render overlays for resolved comment threads."
+  :type 'boolean
+  :group 'code-review-minimal)
+
 ;;;; ── Backend Registry ──
 ;;
 ;; THE single extension point for backends.
@@ -398,7 +403,9 @@ for each matching thread."
                    (let ((count 0))
                      (dolist (th threads)
                        (when (and rel-path
-                                  (string= (plist-get th :path) rel-path))
+                                  (string= (plist-get th :path) rel-path)
+                                  (not (and code-review-minimal-hide-resolved
+                                            (eq (plist-get th :resolved) t))))
                          (code-review-minimal--insert-discussion-overlay
                           (plist-get th :line)
                           (plist-get th :thread)

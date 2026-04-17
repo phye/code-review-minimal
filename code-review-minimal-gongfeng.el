@@ -319,15 +319,20 @@ CALLBACK receives the parsed JSON response (or nil on error)."
               (message "code-review-minimal: failed to resolve note %d" note-id)))))))))
 
 (defun code-review-minimal--gongfeng-reply-comment (note-id body on-success)
-  "Post a reply to the thread rooted at NOTE-ID with BODY (Gongfeng), then call ON-SUCCESS."
+  "Post a reply to the root note NOTE-ID with BODY (Gongfeng), then call ON-SUCCESS.
+
+Uses POST /projects/:id/merge_requests/:mr_id/notes/:note_id/replies.
+NOTE-ID must be the root note of a thread; the API does not support
+replying to replies."
   (let ((project-id (code-review-minimal--gongfeng-ensure-project-id)))
     (code-review-minimal--gongfeng-resolve-mr-id
      (lambda (mr-id)
        (let* ((url     (code-review-minimal--gongfeng-api-url
                         "projects" project-id "merge_requests"
-                        (number-to-string mr-id) "notes"))
-              (payload `((body      . ,body)
-                         (parent_id . ,note-id))))
+                        (number-to-string mr-id) "notes"
+                        (number-to-string note-id) "replies"))
+              (payload `((body           . ,body)
+                         (notify_enabled . :json-false))))
          (code-review-minimal--gongfeng-http-request
           "POST" url payload
           (lambda (resp)

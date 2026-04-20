@@ -126,6 +126,13 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
   :type 'boolean
   :group 'code-review-minimal)
 
+(defcustom code-review-minimal-highlight-hunks t
+  "When non-nil, highlight diff hunks with overlays in review buffers.
+Added lines are shown with a green tint, removed lines are displayed
+inline in red, and the overall hunk region gets a subtle background."
+  :type 'boolean
+  :group 'code-review-minimal)
+
 ;;;; ── Backend Registry ──
 ;;
 ;; THE single extension point for backends.
@@ -149,6 +156,15 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
 ;;       :note-id  — integer id of the root note
 ;;     Return ALL threads for the MR — do NOT filter by current file.
 ;;     Do NOT touch overlays; the core handles rendering.
+;;
+;;   :fetch-diff  Function (callback)  [optional]
+;;     Fetch the diff for the MR/PR.  On completion call:
+;;       (funcall callback CHANGES)
+;;     where CHANGES is a list of plists with keys:
+;;       :old-path — file path in the old version
+;;       :new-path — file path in the new version
+;;       :patch    — unified diff string for this single file (may be nil)
+;;     The core filters by current file and creates hunk overlays.
 ;;
 ;;   :post    Function (beg end body on-success)
 ;;     Post a new inline comment.  Call (funcall on-success) on success.
@@ -182,6 +198,7 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
      :api-url-var  code-review-minimal-gongfeng-api-url
      :remote-re     "git\\.woa\\.com\\|code\\.tencent\\.com"
      :fetch         code-review-minimal--gongfeng-fetch-comments
+     :fetch-diff    code-review-minimal--gongfeng-fetch-diff
      :post          code-review-minimal--gongfeng-post-comment
      :update        code-review-minimal--gongfeng-update-comment
      :resolve       code-review-minimal--gongfeng-resolve-comment
@@ -191,6 +208,7 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
      :api-url-var  code-review-minimal-github-api-url
      :remote-re     "github"
      :fetch         code-review-minimal--github-fetch-comments
+     :fetch-diff    code-review-minimal--github-fetch-diff
      :post          code-review-minimal--github-post-comment
      :update        code-review-minimal--github-update-comment
      :resolve       code-review-minimal--github-resolve-comment
@@ -200,6 +218,7 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
      :api-url-var  code-review-minimal-gitlab-api-url
      :remote-re     "gitlab"
      :fetch         code-review-minimal--gitlab-fetch-comments
+     :fetch-diff    code-review-minimal--gitlab-fetch-diff
      :post          code-review-minimal--gitlab-post-comment
      :update        code-review-minimal--gitlab-update-comment
      :resolve       code-review-minimal--gitlab-resolve-comment
@@ -386,15 +405,17 @@ Supported URL formats:
 ;; overlays or trigger re-fetches themselves.
 
 (defun code-review-minimal--fetch-comments ()
-  "Fetch comments via the current backend and render them as overlays.
-The backend `:fetch' function receives a callback that is called with a list
-of thread plists (:path :line :thread :resolved :note-id).  The core filters
-by the current file and calls `code-review-minimal--insert-discussion-overlay'
-for each matching thread."
+  "Fetch comments and diff via the current backend and render overlays.
+The backend `:fetch' function receives a callback with thread plists.
+The backend `:fetch-diff' (if available) receives a callback with change plists.
+The core filters by the current file and creates both comment and hunk overlays."
   (let ((rel-path (code-review-minimal--relative-file-path))
-        (buf      (current-buffer)))
-    (funcall (code-review-minimal--backend-prop
-              code-review-minimal--current-backend :fetch)
+        (buf      (current-buffer))
+        (backend  code-review-minimal--current-backend)
+        (iid      code-review-minimal--mr-iid)
+        (proj     code-review-minimal--project-info))
+    ;; Fetch comments
+    (funcall (code-review-minimal--backend-prop backend :fetch)
              (lambda (threads)
                (with-current-buffer buf
                  (code-review-minimal--clear-overlays)
@@ -413,7 +434,10 @@ for each matching thread."
                           (plist-get th :note-id))
                          (cl-incf count)))
                      (message "code-review-minimal: %d thread(s) in this file, %d total."
-                              count (length threads)))))))))
+                              count (length threads)))))))
+    ;; Fetch diff in parallel (if enabled and backend supports it)
+    (when code-review-minimal-highlight-hunks
+      (code-review-minimal--fetch-diff backend buf iid proj rel-path))))
 
 (defun code-review-minimal--post-comment (beg end body)
   "Post a new comment via the current backend, then re-fetch."
@@ -467,6 +491,36 @@ for each matching thread."
                (with-current-buffer buf
                  (code-review-minimal--fetch-comments))))))
 
+(defun code-review-minimal--find-patch-for-file (changes rel-path)
+  "Find the patch string for REL-PATH in CHANGES list.
+Each element of CHANGES is a plist with :old-path, :new-path, and :patch."
+  (cl-loop for c in changes
+           when (or (string= (plist-get c :new-path) rel-path)
+                    (string= (plist-get c :old-path) rel-path))
+           return (plist-get c :patch)))
+
+(defun code-review-minimal--diff-cache-key (backend iid project-info)
+  "Return a cache key for the diff of BACKEND IID PROJECT-INFO."
+  (list backend iid project-info))
+
+(defun code-review-minimal--fetch-diff (backend buf iid project-info rel-path)
+  "Fetch or reuse cached diff for BACKEND IID, then render hunk overlays in BUF for REL-PATH."
+  (when (code-review-minimal--backend-prop backend :fetch-diff)
+    (let* ((key (code-review-minimal--diff-cache-key backend iid project-info))
+           (cached (gethash key code-review-minimal--diff-cache)))
+      (if cached
+          (with-current-buffer buf
+            (code-review-minimal--clear-hunk-overlays)
+            (when-let ((patch (code-review-minimal--find-patch-for-file cached rel-path)))
+              (code-review-minimal--insert-hunk-overlays patch)))
+        (funcall (code-review-minimal--backend-prop backend :fetch-diff)
+                 (lambda (changes)
+                   (puthash key changes code-review-minimal--diff-cache)
+                   (with-current-buffer buf
+                     (code-review-minimal--clear-hunk-overlays)
+                     (when-let ((patch (code-review-minimal--find-patch-for-file changes rel-path)))
+                       (code-review-minimal--insert-hunk-overlays patch)))))))))
+
 ;;;; ─── Per-repo Cache ─────────────────────────────────────────────────────────
 
 (defvar code-review-minimal--iid-cache (make-hash-table :test 'equal)
@@ -474,6 +528,10 @@ for each matching thread."
 
 (defvar code-review-minimal--backend-cache (make-hash-table :test 'equal)
   "In-memory cache mapping git-root (string) → backend symbol.")
+
+(defvar code-review-minimal--diff-cache (make-hash-table :test 'equal)
+  "In-memory cache mapping MR key → list of change plists.
+The key is produced by `code-review-minimal--diff-cache-key'.")
 
 (defun code-review-minimal--git-root ()
   "Return the absolute path to the git root for the current buffer, or nil."
@@ -547,6 +605,9 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
 (defvar-local code-review-minimal--overlays nil
   "List of comment overlays created by `code-review-minimal-mode'.")
 
+(defvar-local code-review-minimal--hunk-overlays nil
+  "List of hunk highlight overlays created by `code-review-minimal-mode'.")
+
 (defvar-local code-review-minimal--input-overlay nil
   "The currently active comment-input overlay, if any.")
 
@@ -580,6 +641,152 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
   "Remove all comment overlays."
   (mapc #'delete-overlay code-review-minimal--overlays)
   (setq code-review-minimal--overlays nil))
+
+(defun code-review-minimal--clear-hunk-overlays ()
+  "Remove all hunk highlight overlays."
+  (mapc #'delete-overlay code-review-minimal--hunk-overlays)
+  (setq code-review-minimal--hunk-overlays nil))
+
+;;;; ─── Diff Parsing ──────────────────────────────────────────────────────────
+
+(defun code-review-minimal--format-removed (lines)
+  "Format removed LINES as a display string."
+  (mapconcat (lambda (l) (concat "  │ - " l)) (nreverse lines) "\n"))
+
+(defun code-review-minimal--parse-patch (patch)
+  "Parse unified diff PATCH string for a single file.
+Return a list of hunk plists:
+  (:new-start N :new-count M :added-lines (LINE-NUMS) :removed-segments ((ANCHOR . TEXT) ...))
+ANCHOR is the new-file line number after which the removed lines should appear;
+0 means before the first line of the hunk."
+  (let ((hunks nil)
+        (lines (split-string patch "\n")))
+    (while lines
+      (if (string-match
+           "^@@ -\\([0-9]+\\)\\(?:,\\([0-9]+\\)\\)? [+]\\([0-9]+\\)\\(?:,\\([0-9]+\\)\\)? @@"
+           (car lines))
+          (let* ((new-start (string-to-number (match-string 3 (car lines))))
+                 (new-line new-start)
+                 (added-lines nil)
+                 (removed-segments nil)
+                 (current-removed nil)
+                 (last-new-line nil))
+            (setq lines (cdr lines))
+            (while (and lines
+                        (not (string-match "^@@ " (car lines)))
+                        (not (string-match "^diff --git" (car lines))))
+              (let ((line (car lines)))
+                (cond
+                 ;; Removed line
+                 ((string-prefix-p "-" line)
+                  (push (substring line 1) current-removed))
+                 ;; Added line
+                 ((string-prefix-p "+" line)
+                  (when current-removed
+                    (push (cons (or last-new-line (1- new-start))
+                                (code-review-minimal--format-removed current-removed))
+                          removed-segments)
+                    (setq current-removed nil))
+                  (push new-line added-lines)
+                  (setq last-new-line new-line)
+                  (cl-incf new-line))
+                 ;; Context line or no-newline marker
+                 ((or (string-prefix-p " " line)
+                      (string-prefix-p "\\" line))
+                  (when current-removed
+                    (push (cons (or last-new-line (1- new-start))
+                                (code-review-minimal--format-removed current-removed))
+                          removed-segments)
+                    (setq current-removed nil))
+                  (setq last-new-line new-line)
+                  (cl-incf new-line))
+                 ;; Skip anything else (e.g. empty lines in patch)
+                 (t nil)))
+              (setq lines (cdr lines)))
+            ;; Flush remaining removed lines at end of hunk
+            (when current-removed
+              (push (cons (or last-new-line (1- new-start))
+                          (code-review-minimal--format-removed current-removed))
+                    removed-segments))
+            (push (list :new-start new-start
+                        :new-count (- new-line new-start)
+                        :added-lines (nreverse added-lines)
+                        :removed-segments (nreverse removed-segments))
+                  hunks))
+        (setq lines (cdr lines))))
+    (nreverse hunks)))
+
+;;;; ─── Hunk Overlay Rendering ────────────────────────────────────────────────
+
+(defun code-review-minimal--insert-hunk-overlays (patch)
+  "Parse PATCH and insert hunk highlight overlays into the current buffer."
+  (let ((hunks (code-review-minimal--parse-patch patch))
+        (buf-lines (line-number-at-pos (point-max))))
+    (dolist (hunk hunks)
+      (let* ((new-start (plist-get hunk :new-start))
+             (new-count (plist-get hunk :new-count))
+             (added-lines (plist-get hunk :added-lines))
+             (removed-segments (plist-get hunk :removed-segments))
+             (end-line (+ new-start new-count -1)))
+        ;; Region overlay
+        (when (and (>= new-start 1) (<= new-start buf-lines))
+          (let* ((beg-pos (save-excursion
+                            (goto-char (point-min))
+                            (forward-line (1- new-start))
+                            (point)))
+                 (end-pos (save-excursion
+                            (goto-char (point-min))
+                            (forward-line (1- (min end-line buf-lines)))
+                            (line-end-position)))
+                 (ov (make-overlay beg-pos end-pos)))
+            (overlay-put ov 'face 'code-review-minimal-hunk-region-face)
+            (overlay-put ov 'code-review-minimal-hunk t)
+            (push ov code-review-minimal--hunk-overlays)))
+        ;; Added line overlays
+        (dolist (line added-lines)
+          (when (and (>= line 1) (<= line buf-lines))
+            (let* ((beg (save-excursion
+                          (goto-char (point-min))
+                          (forward-line (1- line))
+                          (point)))
+                   (end (save-excursion
+                          (goto-char (point-min))
+                          (forward-line (1- line))
+                          (line-end-position)))
+                   (ov (make-overlay beg end)))
+              (overlay-put ov 'face 'code-review-minimal-hunk-added-face)
+              (overlay-put ov 'code-review-minimal-hunk t)
+              (push ov code-review-minimal--hunk-overlays))))
+        ;; Removed line overlays
+        (dolist (seg removed-segments)
+          (let ((anchor (car seg))
+                (text (cdr seg)))
+            (cond
+             ;; Before first line
+             ((= anchor 0)
+              (when (>= buf-lines 1)
+                (let* ((pos (save-excursion
+                              (goto-char (point-min))
+                              (point)))
+                       (ov (make-overlay pos pos)))
+                  (overlay-put
+                   ov 'before-string
+                   (concat (propertize text 'face 'code-review-minimal-hunk-removed-face)
+                           "\n"))
+                  (overlay-put ov 'code-review-minimal-hunk t)
+                  (push ov code-review-minimal--hunk-overlays))))
+             ;; After anchor line
+             ((and (>= anchor 1) (<= anchor buf-lines))
+              (let* ((pos (save-excursion
+                            (goto-char (point-min))
+                            (forward-line (1- anchor))
+                            (line-end-position)))
+                     (ov (make-overlay pos pos nil t nil)))
+                (overlay-put
+                 ov 'after-string
+                 (concat "\n" (propertize text 'face 'code-review-minimal-hunk-removed-face)))
+                (overlay-put ov 'code-review-minimal-hunk t)
+                (push ov code-review-minimal--hunk-overlays))))))))))
 
 ;;;; ─── Overlay Rendering ─────────────────────────────────────────────────────
 
@@ -822,6 +1029,11 @@ inline comments for the current buffer."
         (setq code-review-minimal--current-backend backend)
         (code-review-minimal--save-backend backend))
       (code-review-minimal--save-iid iid)
+      ;; Invalidate diff cache for this MR so we always start fresh
+      (remhash (code-review-minimal--diff-cache-key
+                (or backend code-review-minimal--current-backend)
+                iid projinfo)
+               code-review-minimal--diff-cache)
       (code-review-minimal--ensure-backend)
       (code-review-minimal--assert-token code-review-minimal--current-backend)
       (message "code-review-minimal: reviewing !%d on %s [%s]" iid
@@ -991,6 +1203,7 @@ Commands:
         (code-review-minimal--fetch-comments))
     ;; Disable
     (code-review-minimal--clear-overlays)
+    (code-review-minimal--clear-hunk-overlays)
     (when code-review-minimal--input-overlay
       (code-review-minimal--cancel-comment))
     (setq code-review-minimal--mr-iid nil

@@ -124,6 +124,28 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
                                                    (code-review-minimal--github-normalize-comments
                                                     comments)))))))
 
+(defun code-review-minimal--github-fetch-diff (callback)
+  "Fetch PR changed files and call CALLBACK with a list of change plists (GitHub).
+Each plist has :old-path, :new-path, and :patch (unified diff string)."
+  (code-review-minimal--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
+         (repo (alist-get 'repo code-review-minimal--project-info))
+         (pr-number code-review-minimal--mr-iid))
+    (message "code-review-minimal: fetching diff for PR #%d ..." pr-number)
+    (let ((url (code-review-minimal--github-api-url
+                "repos" owner repo "pulls" (number-to-string pr-number) "files")))
+      (code-review-minimal--github-http-request
+       "GET" url nil
+       (lambda (files)
+         (funcall
+          callback
+          (mapcar (lambda (f)
+                    (list :old-path (or (alist-get 'previous_filename f)
+                                        (alist-get 'filename f))
+                          :new-path (alist-get 'filename f)
+                          :patch (alist-get 'patch f)))
+                  (or files '()))))))))
+
 (defun code-review-minimal--github-normalize-comments (comments)
   "Convert GitHub COMMENTS list into the standard thread plist format."
   (mapcar

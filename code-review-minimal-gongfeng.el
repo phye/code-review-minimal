@@ -200,6 +200,27 @@ CALLBACK receives the parsed JSON response (or nil on error)."
           (lambda (notes)
             (funcall callback (code-review-minimal--gongfeng-normalize-notes notes)))))))))
 
+(defun code-review-minimal--gongfeng-fetch-diff (callback)
+  "Fetch MR changes and call CALLBACK with a list of change plists (Gongfeng).
+Each plist has :old-path, :new-path, and :patch (unified diff string)."
+  (let* ((project-id (code-review-minimal--gongfeng-ensure-project-id))
+         (mr-iid code-review-minimal--mr-iid))
+    (message "code-review-minimal: fetching diff for MR !%d ..." mr-iid)
+    (code-review-minimal--gongfeng-resolve-mr-id
+     (lambda (mr-id)
+       (let ((url (code-review-minimal--gongfeng-api-url
+                   "projects" project-id "merge_requests" (number-to-string mr-id) "changes")))
+         (code-review-minimal--gongfeng-http-request
+          "GET" url nil
+          (lambda (resp)
+            (funcall
+             callback
+             (mapcar (lambda (c)
+                       (list :old-path (alist-get 'old_path c)
+                             :new-path (alist-get 'new_path c)
+                             :patch (alist-get 'diff c)))
+                     (or (alist-get 'changes resp) '()))))))))))
+
 (defun code-review-minimal--gongfeng-normalize-notes (notes)
   "Convert Gongfeng NOTES list into the standard thread plist format."
   (let ((by-id (make-hash-table))

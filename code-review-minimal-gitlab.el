@@ -147,6 +147,27 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
                                                       (code-review-minimal--gitlab-normalize-notes
                                                        notes)))))))))
 
+(defun code-review-minimal--gitlab-fetch-diff (callback)
+  "Fetch MR changes and call CALLBACK with a list of change plists (GitLab).
+Each plist has :old-path, :new-path, and :patch (unified diff string)."
+  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
+         (mr-iid code-review-minimal--mr-iid))
+    (message "code-review-minimal: fetching diff for MR !%d ..." mr-iid)
+    (code-review-minimal--gitlab-resolve-mr-id
+     (lambda (mr-id)
+       (let ((url (code-review-minimal--gitlab-api-url
+                   "projects" project-id "merge_requests" (number-to-string mr-id) "changes")))
+         (code-review-minimal--gitlab-http-request
+          "GET" url nil
+          (lambda (resp)
+            (funcall
+             callback
+             (mapcar (lambda (c)
+                       (list :old-path (alist-get 'old_path c)
+                             :new-path (alist-get 'new_path c)
+                             :patch (alist-get 'diff c)))
+                     (or (alist-get 'changes resp) '()))))))))))
+
 (defun code-review-minimal--gitlab-normalize-notes (notes)
   "Convert GitLab NOTES list into the standard thread plist format."
   (let ((by-id (make-hash-table))

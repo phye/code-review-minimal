@@ -83,6 +83,34 @@
   "Face for the ○open status indicator in a comment overlay."
   :group 'code-review-minimal)
 
+;;;; ─── Hunk highlighting ─────────────────────────────────────────────────────
+
+(defface code-review-minimal-hunk-added-face
+  '((((background dark))
+     :background "#1a3a1a"
+     :foreground "#7ec87e"
+     :extend t)
+    (t :background "#edfaed" :foreground "#1a4a1a" :extend t))
+  "Face for lines added in the current MR/PR diff."
+  :group 'code-review-minimal)
+
+(defface code-review-minimal-hunk-removed-face
+  '((((background dark))
+     :background "#3a1a1a"
+     :foreground "#c87e7e"
+     :extend t)
+    (t :background "#faeded" :foreground "#4a1a1a" :extend t))
+  "Face for removed lines shown inline in the diff overlay."
+  :group 'code-review-minimal)
+
+(defface code-review-minimal-hunk-region-face
+  '((((background dark))
+     :background "#1e2530"
+     :extend t)
+    (t :background "#f0f4f8" :extend t))
+  "Face for the overall hunk region background."
+  :group 'code-review-minimal)
+
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
 (provide 'code-review-minimal-faces)

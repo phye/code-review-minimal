@@ -764,6 +764,36 @@ If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
         (setq found ov)))
     found))
 
+(defun code-review-minimal--sorted-overlay-positions ()
+  "Return list of overlay start positions sorted ascending."
+  (sort (mapcar #'overlay-start code-review-minimal--overlays) #'<))
+
+;;;###autoload
+(defun code-review-minimal-next-thread ()
+  "Move point to the next comment thread overlay."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (user-error "code-review-minimal: please enable `code-review-minimal-mode' first"))
+  (let* ((pos (point))
+         (positions (code-review-minimal--sorted-overlay-positions))
+         (next (cl-find-if (lambda (p) (> p pos)) positions)))
+    (if next
+        (goto-char next)
+      (user-error "code-review-minimal: no next comment thread"))))
+
+;;;###autoload
+(defun code-review-minimal-previous-thread ()
+  "Move point to the previous comment thread overlay."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (user-error "code-review-minimal: please enable `code-review-minimal-mode' first"))
+  (let* ((pos (point))
+         (positions (code-review-minimal--sorted-overlay-positions))
+         (prev (cl-find-if (lambda (p) (< p pos)) (reverse positions))))
+    (if prev
+        (goto-char prev)
+      (user-error "code-review-minimal: no previous comment thread"))))
+
 ;;;###autoload
 (defun code-review-minimal-review-url (url)
   "Start a code review session for the MR/PR at URL.
@@ -915,6 +945,8 @@ Commands:
   `code-review-minimal-reply-comment'     - reply to comment thread at point
   `code-review-minimal-delete-comment'    - delete comment at point
   `code-review-minimal-refresh'           - re-fetch comments
+  `code-review-minimal-next-thread'       - go to next comment thread
+  `code-review-minimal-previous-thread'   - go to previous comment thread
   `code-review-minimal-resolve-comment'   - resolve comment at point
   `code-review-minimal-set-backend-for-repo' - change backend for this repo"
   :lighter " CR"

@@ -234,13 +234,13 @@ LINE is the current line number; ABS-PATH is the current buffer's absolute path.
 
 (defun code-review-minimal--goto-hunk (abs-path line)
   "Visit ABS-PATH (opening it if needed) and move point to LINE."
-  (if (and buffer-file-name
-           (string= (expand-file-name buffer-file-name) abs-path))
-      (goto-line line)
+  (unless (and buffer-file-name
+               (string= (expand-file-name buffer-file-name) abs-path))
     (find-file abs-path)
     (unless (bound-and-true-p code-review-minimal-mode)
-      (code-review-minimal-mode 1))
-    (goto-line line)))
+      (code-review-minimal-mode 1)))
+  (goto-char (point-min))
+  (forward-line (1- line)))
 
 ;;;###autoload
 (defun code-review-minimal-next-hunk ()

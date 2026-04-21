@@ -828,6 +828,24 @@ inline comments for the current buffer."
                (or (alist-get 'project-id projinfo)
                    (format "%s/%s" (alist-get 'owner projinfo) (alist-get 'repo projinfo)))
                code-review-minimal--current-backend)
+      ;; Prompt user to checkout a branch for this MR/PR.
+      (let* ((root (or (code-review-minimal--git-root) default-directory))
+             (default-directory root)
+             (branches
+              (split-string
+               (shell-command-to-string
+                "git branch '--format=%(refname:short)' 2>/dev/null")
+               "\n" t))
+             (branch
+              (completing-read "Checkout branch for review (RET to skip): "
+                               branches nil nil nil nil "")))
+        (unless (string-empty-p branch)
+          (let ((result (shell-command
+                         (format "git checkout %s"
+                                 (shell-quote-argument branch)))))
+            (if (zerop result)
+                (message "code-review-minimal: checked out branch %s" branch)
+              (message "code-review-minimal: git checkout %s failed" branch)))))
       ;; Enable mode (which fetches comments) or just refresh if already on
       (if (bound-and-true-p code-review-minimal-mode)
           (code-review-minimal--fetch-comments)

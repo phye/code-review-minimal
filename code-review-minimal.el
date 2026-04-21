@@ -23,6 +23,10 @@
 ;;      Enterprise and self-hosted GitLab instances work automatically by
 ;;      setting the appropriate base-URL custom variable.
 ;;
+;;      For multiple accounts on the same host, set the git config first:
+;;        git config --global <backend>.user yourname
+;;      then use `yourname^crm' as the login in ~/.authinfo.
+;;
 ;;   2. Start a review session from a PR/MR web URL:
 ;;        M-x code-review-minimal-review-url
 ;;      The backend (github/gitlab/gongfeng) is auto-detected from the URL host
@@ -741,6 +745,8 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                  (ov (make-overlay beg-pos end-pos)))
             (overlay-put ov 'face 'code-review-minimal-hunk-region-face)
             (overlay-put ov 'code-review-minimal-hunk t)
+            (overlay-put ov 'evaporate t)
+            (overlay-put ov 'priority -10)
             (push ov code-review-minimal--hunk-overlays)))
         ;; Added line overlays
         (dolist (line added-lines)
@@ -756,6 +762,8 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                    (ov (make-overlay beg end)))
               (overlay-put ov 'face 'code-review-minimal-hunk-added-face)
               (overlay-put ov 'code-review-minimal-hunk t)
+              (overlay-put ov 'evaporate t)
+              (overlay-put ov 'priority -10)
               (push ov code-review-minimal--hunk-overlays))))
         ;; Removed line overlays
         (dolist (seg removed-segments)
@@ -774,6 +782,8 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                    (concat (propertize text 'face 'code-review-minimal-hunk-removed-face)
                            "\n"))
                   (overlay-put ov 'code-review-minimal-hunk t)
+                  (overlay-put ov 'evaporate t)
+                  (overlay-put ov 'priority -10)
                   (push ov code-review-minimal--hunk-overlays))))
              ;; After anchor line
              ((and (>= anchor 1) (<= anchor buf-lines))
@@ -786,6 +796,8 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                  ov 'after-string
                  (concat "\n" (propertize text 'face 'code-review-minimal-hunk-removed-face)))
                 (overlay-put ov 'code-review-minimal-hunk t)
+                (overlay-put ov 'evaporate t)
+                (overlay-put ov 'priority -10)
                 (push ov code-review-minimal--hunk-overlays))))))))))
 
 ;;;; ─── Overlay Rendering ─────────────────────────────────────────────────────
@@ -843,6 +855,7 @@ ANCHOR is the new-file line number after which the removed lines should appear;
     (overlay-put ov 'code-review-minimal-note-id first-note-id)
     (overlay-put ov 'code-review-minimal-body first-body)
     (overlay-put ov 'code-review-minimal-resolved resolved)
+    (overlay-put ov 'priority 10)
     (push ov code-review-minimal--overlays)))
 
 ;;;; ─── Input Overlay ─────────────────────────────────────────────────────────
@@ -857,7 +870,7 @@ ANCHOR is the new-file line number after which the removed lines should appear;
 (defun code-review-minimal--open-input-overlay (beg end &optional edit-note-id initial-body reply-note-id)
   "Open inline input overlay below region BEG..END.
 If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY.
-If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
+If REPLY-NOTz-ID is non-nil, the submission will post a reply to that thread."
   (when code-review-minimal--input-overlay
     (code-review-minimal--close-input-overlay))
   (let* ((end-pos (save-excursion

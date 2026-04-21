@@ -42,19 +42,7 @@
 (require 'url-http)
 (require 'cl-lib)
 (require 'subr-x)
-
-;; Declare variables and functions from the parent package to avoid
-;; circular-require warnings.  These are always present at runtime because
-;; code-review-minimal.el loads this file.
-(defvar code-review-minimal--project-info)
-(defvar code-review-minimal--mr-iid)
-(defvar code-review-minimal--mr-id)
-(defvar code-review-minimal--current-backend)
-(defvar code-review-minimal-gongfeng-api-url)
-(declare-function code-review-minimal--git-remote-url "code-review-minimal")
-(declare-function code-review-minimal--get-token "code-review-minimal")
-(declare-function code-review-minimal--relative-file-path "code-review-minimal")
-(declare-function code-review-minimal--line-number-at "code-review-minimal")
+(require 'code-review-minimal-backend)
 
 ;;;; ─── Gongfeng Remote Parsing ────────────────────────────────────────────────
 

@@ -203,31 +203,78 @@ trigger the next rendering step (typically fetching comment threads)."
 
 ;;;; ─── Public Commands ───────────────────────────────────────────────────────
 
-;;;###autoload
-(defun code-review-minimal-next-thread ()
-  "Move point to the next comment thread overlay."
-  (interactive)
-  (unless (bound-and-true-p code-review-minimal-mode)
-    (user-error "code-review-minimal: please enable `code-review-minimal-mode' first"))
-  (let* ((pos (point))
-         (positions (code-review-minimal--sorted-overlay-positions))
-         (next (cl-find-if (lambda (p) (> p pos)) positions)))
-    (if next
-        (goto-char next)
-      (user-error "code-review-minimal: no next comment thread"))))
+(defun code-review-minimal--all-hunk-positions ()
+  "Return a sorted list of (ABS-PATH . LINE) for every hunk in the current MR diff.
+ABS-PATH is the absolute path to the new-side file; LINE is the hunk's new-start line.
+Returns nil when no diff data is cached yet."
+  (let* ((backend  code-review-minimal--current-backend)
+         (iid      code-review-minimal--mr-iid)
+         (proj     code-review-minimal--project-info)
+         (key      (code-review-minimal--diff-cache-key backend iid proj))
+         (changes  (gethash key code-review-minimal--diff-cache))
+         (root     (code-review-minimal--git-root))
+         (result   nil))
+    (when (and changes root)
+      (dolist (c changes)
+        (let* ((rel  (or (plist-get c :new-path) (plist-get c :old-path)))
+               (abs  (expand-file-name rel root))
+               (patch (plist-get c :patch)))
+          (when (and rel patch)
+            (dolist (hunk (code-review-minimal--parse-patch patch))
+              (push (cons abs (plist-get hunk :new-start)) result)))))
+      (sort result (lambda (a b)
+                     (or (string< (car a) (car b))
+                         (and (string= (car a) (car b))
+                              (< (cdr a) (cdr b)))))))))
+
+(defun code-review-minimal--current-hunk-key ()
+  "Return a (ABS-PATH . LINE) key representing the current position.
+LINE is the current line number; ABS-PATH is the current buffer's absolute path."
+  (cons (expand-file-name (or buffer-file-name "")) (line-number-at-pos)))
+
+(defun code-review-minimal--goto-hunk (abs-path line)
+  "Visit ABS-PATH (opening it if needed) and move point to LINE."
+  (if (and buffer-file-name
+           (string= (expand-file-name buffer-file-name) abs-path))
+      (goto-line line)
+    (find-file abs-path)
+    (unless (bound-and-true-p code-review-minimal-mode)
+      (code-review-minimal-mode 1))
+    (goto-line line)))
 
 ;;;###autoload
-(defun code-review-minimal-previous-thread ()
-  "Move point to the previous comment thread overlay."
+(defun code-review-minimal-next-hunk ()
+  "Move point to the next diff hunk, opening other files in the MR if needed."
   (interactive)
   (unless (bound-and-true-p code-review-minimal-mode)
     (user-error "code-review-minimal: please enable `code-review-minimal-mode' first"))
-  (let* ((pos (point))
-         (positions (code-review-minimal--sorted-overlay-positions))
-         (prev (cl-find-if (lambda (p) (< p pos)) (reverse positions))))
+  (let* ((all  (code-review-minimal--all-hunk-positions))
+         (cur  (code-review-minimal--current-hunk-key))
+         (next (cl-find-if (lambda (entry)
+                             (or (string< (car cur) (car entry))
+                                 (and (string= (car cur) (car entry))
+                                      (< (cdr cur) (cdr entry)))))
+                           all)))
+    (if next
+        (code-review-minimal--goto-hunk (car next) (cdr next))
+      (user-error "code-review-minimal: no next hunk"))))
+
+;;;###autoload
+(defun code-review-minimal-previous-hunk ()
+  "Move point to the previous diff hunk, opening other files in the MR if needed."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (user-error "code-review-minimal: please enable `code-review-minimal-mode' first"))
+  (let* ((all  (code-review-minimal--all-hunk-positions))
+         (cur  (code-review-minimal--current-hunk-key))
+         (prev (cl-find-if (lambda (entry)
+                             (or (string< (car entry) (car cur))
+                                 (and (string= (car entry) (car cur))
+                                      (< (cdr entry) (cdr cur)))))
+                           (reverse all))))
     (if prev
-        (goto-char prev)
-      (user-error "code-review-minimal: no previous comment thread"))))
+        (code-review-minimal--goto-hunk (car prev) (cdr prev))
+      (user-error "code-review-minimal: no previous hunk"))))
 
 ;;;###autoload
 (defun code-review-minimal-review-url (url)
@@ -379,7 +426,7 @@ Use this to override auto-detection."
       (user-error "code-review-minimal: no comment overlay on this line"))
     (code-review-minimal--assert-token code-review-minimal--current-backend)
     (let ((note-id (overlay-get ov 'code-review-minimal-note-id)))
-      (when (yes-or-no-p (format "Delete comment %d? " note-id))
+      (when (yes-or-no-p (format "Delete comment %s? " note-id))
         (code-review-minimal--delete-comment note-id)))))
 
 ;;;; ─── Minor Mode ────────────────────────────────────────────────────────────
@@ -406,8 +453,8 @@ Commands:
   `code-review-minimal-reply-comment'     - reply to comment thread at point
   `code-review-minimal-delete-comment'    - delete comment at point
   `code-review-minimal-refresh'           - re-fetch comments
-  `code-review-minimal-next-thread'       - go to next comment thread
-  `code-review-minimal-previous-thread'   - go to previous comment thread
+  `code-review-minimal-next-hunk'          - go to next diff hunk (cross-file)
+  `code-review-minimal-previous-hunk'      - go to previous diff hunk (cross-file)
   `code-review-minimal-resolve-comment'   - resolve comment at point
   `code-review-minimal-set-backend-for-repo' - change backend for this repo"
   :lighter " CR"

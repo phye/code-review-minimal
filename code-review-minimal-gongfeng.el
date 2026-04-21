@@ -156,16 +156,17 @@ CALLBACK receives the parsed JSON response (or nil on error)."
         (message "[crm-gongfeng] resolve-mr-id: reusing cached mr-id=%d" code-review-minimal--mr-id)
         (funcall callback code-review-minimal--mr-id))
     (let* ((project-id (code-review-minimal--gongfeng-ensure-project-id))
+           (iid code-review-minimal--mr-iid)
            (url
             (code-review-minimal--gongfeng-api-url
              "projects"
              project-id
              "merge_request"
              "iid"
-             (number-to-string code-review-minimal--mr-iid)))
+             (number-to-string iid)))
            (buf (current-buffer)))
       (message "[crm-gongfeng] resolve-mr-id: fetching iid=%d url=%s"
-               code-review-minimal--mr-iid url)
+               iid url)
       (code-review-minimal--gongfeng-http-request
        "GET" url
        nil
@@ -176,7 +177,7 @@ CALLBACK receives the parsed JSON response (or nil on error)."
            (if (not (numberp mr-id))
                (message "[crm-gongfeng] resolve-mr-id: failed — id=%S full response: %S" mr-id mr)
              (message "[crm-gongfeng] resolve-mr-id: resolved iid=%d → mr-id=%d"
-                      code-review-minimal--mr-iid mr-id)
+                      iid mr-id)
              (with-current-buffer buf
                (setq code-review-minimal--mr-id mr-id))
              (funcall callback mr-id))))))))

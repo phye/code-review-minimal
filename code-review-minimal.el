@@ -74,63 +74,74 @@
 ;; Backend functions receive callbacks / on-success thunks and must not touch
 ;; overlays or trigger re-fetches themselves.
 
-(defun code-review-minimal--fetch-comments ()
-  "Fetch comments and diff via the current backend and render overlays.
-The backend `:fetch' function receives a callback with thread plists.
-The backend `:fetch-diff' (if available) receives a callback with change plists.
-The core filters by the current file and creates both comment and hunk overlays."
+(defun code-review-minimal--render-comment-threads (buf rel-path threads)
+  "Render comment overlay threads in BUF for REL-PATH from THREADS list."
+  (with-current-buffer buf
+    (code-review-minimal--clear-overlays)
+    (if (null threads)
+        (message "code-review-minimal: no comments found")
+      (let ((count 0))
+        (dolist (th threads)
+          (when (and rel-path
+                     (string= (plist-get th :path) rel-path)
+                     (not (and code-review-minimal-hide-resolved
+                               (eq (plist-get th :resolved) t))))
+            (code-review-minimal--insert-discussion-overlay
+             (plist-get th :line)
+             (plist-get th :thread)
+             (plist-get th :resolved)
+             (plist-get th :note-id))
+            (cl-incf count)))
+        (message "code-review-minimal: %d thread(s) in this file, %d total."
+                 count (length threads))))))
+
+(defun code-review-minimal--refresh-overlays ()
+  "Fetch diff and comments via the current backend and render overlays.
+Diff hunk overlays are rendered first; comment thread overlays are rendered
+after the diff fetch completes (or immediately if diff is disabled/unavailable).
+The backend `:fetch-diff' callback receives change plists; `:fetch' receives
+thread plists.  Both are filtered to the current file."
   (let ((rel-path (code-review-minimal--relative-file-path))
         (buf      (current-buffer))
         (backend  code-review-minimal--current-backend)
         (iid      code-review-minimal--mr-iid)
         (proj     code-review-minimal--project-info))
-    ;; Fetch comments
-    (funcall (code-review-minimal--backend-prop backend :fetch)
-             (lambda (threads)
-               (with-current-buffer buf
-                 (code-review-minimal--clear-overlays)
-                 (if (null threads)
-                     (message "code-review-minimal: no comments found")
-                   (let ((count 0))
-                     (dolist (th threads)
-                       (when (and rel-path
-                                  (string= (plist-get th :path) rel-path)
-                                  (not (and code-review-minimal-hide-resolved
-                                            (eq (plist-get th :resolved) t))))
-                         (code-review-minimal--insert-discussion-overlay
-                          (plist-get th :line)
-                          (plist-get th :thread)
-                          (plist-get th :resolved)
-                          (plist-get th :note-id))
-                         (cl-incf count)))
-                     (message "code-review-minimal: %d thread(s) in this file, %d total."
-                              count (length threads)))))))
-    ;; Fetch diff in parallel (if enabled and backend supports it)
-    (when code-review-minimal-highlight-hunks
-      (code-review-minimal--fetch-diff backend buf iid proj rel-path))))
+    ;; Define the comment-fetch thunk so it can be called from the diff callback
+    ;; or directly when diff is skipped.
+    (let ((fetch-comments
+           (lambda ()
+             (funcall (code-review-minimal--backend-prop backend :fetch)
+                      (lambda (threads)
+                        (code-review-minimal--render-comment-threads buf rel-path threads))))))
+      (if (and code-review-minimal-highlight-hunks
+               (code-review-minimal--backend-prop backend :fetch-diff))
+          ;; Fetch diff first; render hunk overlays, then fetch comment threads.
+          (code-review-minimal--fetch-diff-then backend buf iid proj rel-path fetch-comments)
+        ;; No diff support or disabled — fetch comments directly.
+        (funcall fetch-comments)))))
 
 (defun code-review-minimal--post-comment (beg end body)
-  "Post a new comment via the current backend, then re-fetch."
+  "Post a new comment via the current backend, then refresh overlays."
   (let ((buf (current-buffer)))
     (funcall (code-review-minimal--backend-prop
               code-review-minimal--current-backend :post)
              beg end body
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--fetch-comments))))))
+                 (code-review-minimal--refresh-overlays))))))
 
 (defun code-review-minimal--update-comment (note-id body)
-  "Update an existing comment via the current backend, then re-fetch."
+  "Update an existing comment via the current backend, then refresh overlays."
   (let ((buf (current-buffer)))
     (funcall (code-review-minimal--backend-prop
               code-review-minimal--current-backend :update)
              note-id body
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--fetch-comments))))))
+                 (code-review-minimal--refresh-overlays))))))
 
 (defun code-review-minimal--resolve-comment (ov)
-  "Resolve a comment via the current backend, then re-fetch."
+  "Resolve a comment via the current backend, then refresh overlays."
   (let ((buf      (current-buffer))
         (note-id  (overlay-get ov 'code-review-minimal-note-id))
         (note-body (overlay-get ov 'code-review-minimal-body)))
@@ -139,49 +150,53 @@ The core filters by the current file and creates both comment and hunk overlays.
              note-id note-body
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--fetch-comments))))))
+                 (code-review-minimal--refresh-overlays))))))
 
 (defun code-review-minimal--reply-comment (note-id body)
-  "Post a reply to the thread rooted at NOTE-ID via the current backend, then re-fetch."
+  "Post a reply to the thread rooted at NOTE-ID via the current backend, then refresh overlays."
   (let ((buf (current-buffer)))
     (funcall (code-review-minimal--backend-prop
               code-review-minimal--current-backend :reply)
              note-id body
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--fetch-comments))))))
+                 (code-review-minimal--refresh-overlays))))))
 
 (defun code-review-minimal--delete-comment (note-id)
-  "Delete the comment NOTE-ID via the current backend, then re-fetch."
+  "Delete the comment NOTE-ID via the current backend, then refresh overlays."
   (let ((buf (current-buffer)))
     (funcall (code-review-minimal--backend-prop
               code-review-minimal--current-backend :delete)
              note-id
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--fetch-comments))))))
+                 (code-review-minimal--refresh-overlays))))))
 
 (defun code-review-minimal--diff-cache-key (backend iid project-info)
   "Return a cache key for the diff of BACKEND IID PROJECT-INFO."
   (list backend iid project-info))
 
-(defun code-review-minimal--fetch-diff (backend buf iid project-info rel-path)
-  "Fetch or reuse cached diff for BACKEND IID, then render hunk overlays in BUF for REL-PATH."
-  (when (code-review-minimal--backend-prop backend :fetch-diff)
-    (let* ((key (code-review-minimal--diff-cache-key backend iid project-info))
-           (cached (gethash key code-review-minimal--diff-cache)))
-      (if cached
+(defun code-review-minimal--fetch-diff-then (backend buf iid project-info rel-path on-done)
+  "Fetch or reuse cached diff for BACKEND IID; render hunk overlays in BUF for REL-PATH.
+After hunk overlays are in place, call ON-DONE (a zero-argument function) to
+trigger the next rendering step (typically fetching comment threads)."
+  (let* ((key (code-review-minimal--diff-cache-key backend iid project-info))
+         (cached (gethash key code-review-minimal--diff-cache)))
+    (if cached
+        (progn
           (with-current-buffer buf
             (code-review-minimal--clear-hunk-overlays)
             (when-let ((patch (code-review-minimal--find-patch-for-file cached rel-path)))
               (code-review-minimal--insert-hunk-overlays patch)))
-        (funcall (code-review-minimal--backend-prop backend :fetch-diff)
-                 (lambda (changes)
-                   (puthash key changes code-review-minimal--diff-cache)
-                   (with-current-buffer buf
-                     (code-review-minimal--clear-hunk-overlays)
-                     (when-let ((patch (code-review-minimal--find-patch-for-file changes rel-path)))
-                       (code-review-minimal--insert-hunk-overlays patch)))))))))
+          (funcall on-done))
+      (funcall (code-review-minimal--backend-prop backend :fetch-diff)
+               (lambda (changes)
+                 (puthash key changes code-review-minimal--diff-cache)
+                 (with-current-buffer buf
+                   (code-review-minimal--clear-hunk-overlays)
+                   (when-let ((patch (code-review-minimal--find-patch-for-file changes rel-path)))
+                     (code-review-minimal--insert-hunk-overlays patch)))
+                 (funcall on-done))))))
 
 ;;;; ─── Public Commands ───────────────────────────────────────────────────────
 
@@ -271,9 +286,9 @@ inline comments for the current buffer."
                   (when (and buffer-file-name (file-readable-p buffer-file-name))
                     (revert-buffer t t)))
               (message "code-review-minimal: git checkout %s failed" branch)))))
-      ;; Enable mode (which fetches comments) or just refresh if already on
+      ;; Enable mode (which refreshes overlays) or just refresh if already on
       (if (bound-and-true-p code-review-minimal-mode)
-          (code-review-minimal--fetch-comments)
+          (code-review-minimal--refresh-overlays)
         (code-review-minimal-mode 1)))))
 
 ;;;###autoload
@@ -319,7 +334,7 @@ Use this to override auto-detection."
   (unless code-review-minimal--mr-iid
     (user-error "code-review-minimal: no MR IID set"))
   (code-review-minimal--assert-token code-review-minimal--current-backend)
-  (code-review-minimal--fetch-comments))
+  (code-review-minimal--refresh-overlays))
 
 ;;;###autoload
 (defun code-review-minimal-resolve-comment ()
@@ -409,11 +424,11 @@ Commands:
                   (setq code-review-minimal--mr-iid cached)
                   (message "code-review-minimal: using cached MR IID !%d" cached))
               (call-interactively #'code-review-minimal-review-url)
-              ;; review-url already fetches comments and handles the rest; bail out
+              ;; review-url already refreshes overlays and handles the rest; bail out
               (setq code-review-minimal-mode nil)
               (cl-return-from nil))))
-        ;; Fetch comments
-        (code-review-minimal--fetch-comments))
+        ;; Refresh diff and comment overlays
+        (code-review-minimal--refresh-overlays))
     ;; Disable
     (code-review-minimal--clear-overlays)
     (code-review-minimal--clear-hunk-overlays)

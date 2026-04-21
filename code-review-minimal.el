@@ -184,12 +184,11 @@ trigger the next rendering step (typically fetching comment threads)."
   (let* ((key (code-review-minimal--diff-cache-key backend iid project-info))
          (cached (gethash key code-review-minimal--diff-cache)))
     (if cached
-        (progn
-          (with-current-buffer buf
-            (code-review-minimal--clear-hunk-overlays)
-            (let ((patch (code-review-minimal--find-patch-for-file cached rel-path)))
-              (when patch
-                (code-review-minimal--insert-hunk-overlays patch))))
+        (with-current-buffer buf
+          (code-review-minimal--clear-hunk-overlays)
+          (let ((patch (code-review-minimal--find-patch-for-file cached rel-path)))
+            (when patch
+              (code-review-minimal--insert-hunk-overlays patch)))
           (funcall on-done))
       (funcall (code-review-minimal--backend-prop backend :fetch-diff)
                (lambda (changes)
@@ -198,8 +197,8 @@ trigger the next rendering step (typically fetching comment threads)."
                    (code-review-minimal--clear-hunk-overlays)
                    (let ((patch (code-review-minimal--find-patch-for-file changes rel-path)))
                      (when patch
-                       (code-review-minimal--insert-hunk-overlays patch))))
-                 (funcall on-done))))))
+                       (code-review-minimal--insert-hunk-overlays patch)))
+                   (funcall on-done)))))))
 
 ;;;; ─── Public Commands ───────────────────────────────────────────────────────
 
@@ -210,14 +209,39 @@ Returns nil when no diff data is cached yet."
   (let* ((backend  code-review-minimal--current-backend)
          (iid      code-review-minimal--mr-iid)
          (proj     code-review-minimal--project-info)
-         (key      (code-review-minimal--diff-cache-key backend iid proj))
-         (changes  (gethash key code-review-minimal--diff-cache))
          (root     (code-review-minimal--git-root))
+         ;; Primary: look up by exact cache key
+         (changes  (when (and backend iid proj)
+                     (gethash (code-review-minimal--diff-cache-key backend iid proj)
+                              code-review-minimal--diff-cache)))
+         ;; Fallback: scan every cached entry and pick the first whose files
+         ;; resolve under the current git root.  This handles the case where
+         ;; buffer-local vars are stale or nil (e.g. after navigating to a new
+         ;; file that hasn't fully inherited MR state yet).
+         (changes  (or changes
+                       (when root
+                         (let ((found nil))
+                           (maphash
+                            (lambda (_k v)
+                              (unless found
+                                (let* ((first (car v))
+                                       (rel   (or (plist-get first :new-path)
+                                                  (plist-get first :old-path))))
+                                  (when (and rel
+                                             (file-exists-p
+                                              (expand-file-name rel root)))
+                                    (setq found v)))))
+                            code-review-minimal--diff-cache)
+                           found))))
          (result   nil))
-    (when (and changes root)
+    (if (not (and changes root))
+        (progn
+          (when (called-interactively-p 'any)
+            (message "code-review-minimal: diff not yet cached — run `code-review-minimal-review-url' first"))
+          nil)
       (dolist (c changes)
-        (let* ((rel  (or (plist-get c :new-path) (plist-get c :old-path)))
-               (abs  (expand-file-name rel root))
+        (let* ((rel   (or (plist-get c :new-path) (plist-get c :old-path)))
+               (abs   (expand-file-name rel root))
                (patch (plist-get c :patch)))
           (when (and rel patch)
             (dolist (hunk (code-review-minimal--parse-patch patch))
@@ -233,48 +257,77 @@ LINE is the current line number; ABS-PATH is the current buffer's absolute path.
   (cons (expand-file-name (or buffer-file-name "")) (line-number-at-pos)))
 
 (defun code-review-minimal--goto-hunk (abs-path line)
-  "Visit ABS-PATH (opening it if needed) and move point to LINE."
-  (unless (and buffer-file-name
-               (string= (expand-file-name buffer-file-name) abs-path))
-    (find-file abs-path)
+  "Visit ABS-PATH (opening it if needed) and move point to LINE.
+Ensures `code-review-minimal-mode' is active in the target buffer.
+MR state (backend, iid, project-info) is propagated from the calling buffer
+into the target buffer so that hunk navigation continues to work there."
+  ;; Capture MR state from the calling buffer before any buffer switch.
+  (let ((src-backend code-review-minimal--current-backend)
+        (src-iid     code-review-minimal--mr-iid)
+        (src-mr-id   code-review-minimal--mr-id)
+        (src-proj    code-review-minimal--project-info))
+    (unless (and buffer-file-name
+                 (string= (expand-file-name buffer-file-name) abs-path))
+      (find-file abs-path))
+    ;; Propagate MR state into the new buffer if it is not already set.
+    (when (and src-backend (not code-review-minimal--current-backend))
+      (setq code-review-minimal--current-backend src-backend))
+    (when (and src-iid (not code-review-minimal--mr-iid))
+      (setq code-review-minimal--mr-iid src-iid))
+    (when (and src-mr-id (not code-review-minimal--mr-id))
+      (setq code-review-minimal--mr-id src-mr-id))
+    (when (and src-proj (not code-review-minimal--project-info))
+      (setq code-review-minimal--project-info src-proj))
     (unless (bound-and-true-p code-review-minimal-mode)
-      (code-review-minimal-mode 1)))
-  (goto-char (point-min))
-  (forward-line (1- line)))
+      (code-review-minimal-mode 1))
+    (goto-char (point-min))
+    (forward-line (1- line))))
 
 ;;;###autoload
 (defun code-review-minimal-next-hunk ()
-  "Move point to the next diff hunk, opening other files in the MR if needed."
+  "Move point to the next diff hunk, opening other files in the MR if needed.
+Wraps around to the first hunk after the last one."
   (interactive)
   (unless (bound-and-true-p code-review-minimal-mode)
     (user-error "code-review-minimal: please enable `code-review-minimal-mode' first"))
   (let* ((all  (code-review-minimal--all-hunk-positions))
          (cur  (code-review-minimal--current-hunk-key))
-         (next (cl-find-if (lambda (entry)
-                             (or (string< (car cur) (car entry))
-                                 (and (string= (car cur) (car entry))
-                                      (< (cdr cur) (cdr entry)))))
-                           all)))
+         (_ (message "[crm-hunk] next-hunk: backend=%S iid=%S cache-size=%d all-count=%d cur=%S"
+                     code-review-minimal--current-backend
+                     code-review-minimal--mr-iid
+                     (hash-table-count code-review-minimal--diff-cache)
+                     (length all)
+                     cur))
+         (next (or (cl-find-if (lambda (entry)
+                                 (or (string< (car cur) (car entry))
+                                     (and (string= (car cur) (car entry))
+                                          (< (cdr cur) (cdr entry)))))
+                               all)
+                   ;; wrap around to first hunk
+                   (car all))))
     (if next
         (code-review-minimal--goto-hunk (car next) (cdr next))
-      (user-error "code-review-minimal: no next hunk"))))
+      (user-error "code-review-minimal: diff not cached yet — run `code-review-minimal-review-url' first"))))
 
 ;;;###autoload
 (defun code-review-minimal-previous-hunk ()
-  "Move point to the previous diff hunk, opening other files in the MR if needed."
+  "Move point to the previous diff hunk, opening other files in the MR if needed.
+Wraps around to the last hunk before the first one."
   (interactive)
   (unless (bound-and-true-p code-review-minimal-mode)
     (user-error "code-review-minimal: please enable `code-review-minimal-mode' first"))
   (let* ((all  (code-review-minimal--all-hunk-positions))
          (cur  (code-review-minimal--current-hunk-key))
-         (prev (cl-find-if (lambda (entry)
-                             (or (string< (car entry) (car cur))
-                                 (and (string= (car entry) (car cur))
-                                      (< (cdr entry) (cdr cur)))))
-                           (reverse all))))
+         (prev (or (cl-find-if (lambda (entry)
+                                 (or (string< (car entry) (car cur))
+                                     (and (string= (car entry) (car cur))
+                                          (< (cdr entry) (cdr cur)))))
+                               (reverse all))
+                   ;; wrap around to last hunk
+                   (car (last all)))))
     (if prev
         (code-review-minimal--goto-hunk (car prev) (cdr prev))
-      (user-error "code-review-minimal: no previous hunk"))))
+      (user-error "code-review-minimal: diff not cached yet — run `code-review-minimal-review-url' first"))))
 
 ;;;###autoload
 (defun code-review-minimal-review-url (url)
@@ -456,7 +509,8 @@ Commands:
   `code-review-minimal-next-hunk'          - go to next diff hunk (cross-file)
   `code-review-minimal-previous-hunk'      - go to previous diff hunk (cross-file)
   `code-review-minimal-resolve-comment'   - resolve comment at point
-  `code-review-minimal-set-backend-for-repo' - change backend for this repo"
+  `code-review-minimal-set-backend-for-repo' - change backend for this repo
+  `code-review-minimal-finish-review'     - end session and clear all state/cache"
   :lighter " CR"
   :keymap code-review-minimal-mode-map
   (if code-review-minimal-mode
@@ -489,7 +543,34 @@ Commands:
           code-review-minimal--project-info nil
           code-review-minimal--current-backend nil)))
 
-;;;; ─── Provide ────────────────────────────────────────────────────────────────
+;;;###autoload
+(defun code-review-minimal-finish-review ()
+  "Finish the current review session and clean up all state.
+
+Disables `code-review-minimal-mode' in every buffer that has it active,
+clears the diff cache, the IID/backend in-memory caches, and removes the
+per-repo cache files (.git/code-review-minimal-iid and
+.git/code-review-minimal-backend) so the next session starts fresh."
+  (interactive)
+  (let ((root (code-review-minimal--git-root)))
+    ;; 1. Disable mode in all live buffers for this repo.
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (bound-and-true-p code-review-minimal-mode)
+          (code-review-minimal-mode -1))))
+    ;; 2. Clear the global diff cache entirely.
+    (clrhash code-review-minimal--diff-cache)
+    ;; 3. Clear the in-memory IID and backend caches.
+    (clrhash code-review-minimal--iid-cache)
+    (clrhash code-review-minimal--backend-cache)
+    ;; 4. Remove the per-repo cache files so IID/backend are not reused next time.
+    (when root
+      (dolist (fname '("code-review-minimal-iid" "code-review-minimal-backend"))
+        (let ((file (expand-file-name fname (expand-file-name ".git" root))))
+          (when (file-exists-p file)
+            (delete-file file)))))
+    (message "code-review-minimal: review session finished and all state cleared.")))
+
 
 (provide 'code-review-minimal)
 

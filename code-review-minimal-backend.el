@@ -141,38 +141,50 @@ inline in red, and the overall hunk region gets a subtle background."
 ;;   :reply   Function (note-id body on-success)
 ;;   :delete  Function (note-id on-success)
 
-(defvar code-review-minimal-backend-registry
-  '((gongfeng
-     :api-url-var  code-review-minimal-gongfeng-api-url
-     :remote-re     "git\\.woa\\.com\\|code\\.tencent\\.com"
-     :fetch         code-review-minimal--gongfeng-fetch-comments
-     :fetch-diff    code-review-minimal--gongfeng-fetch-diff
-     :post          code-review-minimal--gongfeng-post-comment
-     :update        code-review-minimal--gongfeng-update-comment
-     :resolve       code-review-minimal--gongfeng-resolve-comment
-     :reply         code-review-minimal--gongfeng-reply-comment
-     :delete        code-review-minimal--gongfeng-delete-comment)
-    (github
-     :api-url-var  code-review-minimal-github-api-url
-     :remote-re     "github"
-     :fetch         code-review-minimal--github-fetch-comments
-     :fetch-diff    code-review-minimal--github-fetch-diff
-     :post          code-review-minimal--github-post-comment
-     :update        code-review-minimal--github-update-comment
-     :resolve       code-review-minimal--github-resolve-comment
-     :reply         code-review-minimal--github-reply-comment
-     :delete        code-review-minimal--github-delete-comment)
-    (gitlab
-     :api-url-var  code-review-minimal-gitlab-api-url
-     :remote-re     "gitlab"
-     :fetch         code-review-minimal--gitlab-fetch-comments
-     :fetch-diff    code-review-minimal--gitlab-fetch-diff
-     :post          code-review-minimal--gitlab-post-comment
-     :update        code-review-minimal--gitlab-update-comment
-     :resolve       code-review-minimal--gitlab-resolve-comment
-     :reply         code-review-minimal--gitlab-reply-comment
-     :delete        code-review-minimal--gitlab-delete-comment))
-  "Alist mapping backend symbols to their configuration and function table.")
+(defvar code-review-minimal-backend-registry nil
+  "Alist mapping backend symbols to their configuration and function table.
+Each entry: (BACKEND-SYMBOL . PLIST).  See `code-review-minimal-register-backend'
+for the list of recognised plist keys.
+
+Note: the value is always reset on package load so that reloading the file
+picks up any additions (e.g. new :fetch-diff handlers).  User-added backends
+via `code-review-minimal-register-backend' belong in init.el, which runs after
+package load.")
+
+;; Use setq (not the defvar initialiser) so that every reload refreshes the
+;; built-in entries.  defvar only runs its initialiser when the variable is
+;; void, meaning changes to this table would be invisible until Emacs restarts.
+(setq code-review-minimal-backend-registry
+      '((gongfeng
+         :api-url-var  code-review-minimal-gongfeng-api-url
+         :remote-re     "git\\.woa\\.com\\|code\\.tencent\\.com"
+         :fetch         code-review-minimal--gongfeng-fetch-comments
+         :fetch-diff    code-review-minimal--gongfeng-fetch-diff
+         :post          code-review-minimal--gongfeng-post-comment
+         :update        code-review-minimal--gongfeng-update-comment
+         :resolve       code-review-minimal--gongfeng-resolve-comment
+         :reply         code-review-minimal--gongfeng-reply-comment
+         :delete        code-review-minimal--gongfeng-delete-comment)
+        (github
+         :api-url-var  code-review-minimal-github-api-url
+         :remote-re     "github"
+         :fetch         code-review-minimal--github-fetch-comments
+         :fetch-diff    code-review-minimal--github-fetch-diff
+         :post          code-review-minimal--github-post-comment
+         :update        code-review-minimal--github-update-comment
+         :resolve       code-review-minimal--github-resolve-comment
+         :reply         code-review-minimal--github-reply-comment
+         :delete        code-review-minimal--github-delete-comment)
+        (gitlab
+         :api-url-var  code-review-minimal-gitlab-api-url
+         :remote-re     "gitlab"
+         :fetch         code-review-minimal--gitlab-fetch-comments
+         :fetch-diff    code-review-minimal--gitlab-fetch-diff
+         :post          code-review-minimal--gitlab-post-comment
+         :update        code-review-minimal--gitlab-update-comment
+         :resolve       code-review-minimal--gitlab-resolve-comment
+         :reply         code-review-minimal--gitlab-reply-comment
+         :delete        code-review-minimal--gitlab-delete-comment)))
 
 (defun code-review-minimal-register-backend (backend &rest plist)
   "Register BACKEND with its configuration PLIST in the backend registry.

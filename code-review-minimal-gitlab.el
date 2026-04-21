@@ -95,15 +95,16 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
   (if code-review-minimal--mr-id
       (funcall callback code-review-minimal--mr-id)
     (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
+           (iid code-review-minimal--mr-iid)
            (url
             (code-review-minimal--gitlab-api-url
              "projects"
              project-id
              "merge_request"
              "iid"
-             (number-to-string code-review-minimal--mr-iid)))
+             (number-to-string iid)))
            (buf (current-buffer)))
-      (message "code-review-minimal: resolving MR id for IID %d ..." code-review-minimal--mr-iid)
+      (message "code-review-minimal: resolving MR id for IID %d ..." iid)
       (code-review-minimal--gitlab-http-request
        "GET" url
        nil

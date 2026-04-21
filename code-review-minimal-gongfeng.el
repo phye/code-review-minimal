@@ -24,10 +24,14 @@
 ;;
 ;; API endpoints used (base: https://git.woa.com/api/v3, configurable via
 ;; `code-review-minimal-gongfeng-api-url'):
-;;   Resolve MR id : GET  /projects/:encoded_path/merge_request/iid/:iid → .id
-;;   List notes    : GET  /projects/:encoded_path/merge_requests/:id/notes
-;;   Create note   : POST /projects/:encoded_path/merge_requests/:id/notes
-;;   Update note   : PUT  /projects/:encoded_path/merge_requests/:id/notes/:note_id
+;;   Resolve MR id : GET    /projects/:encoded_path/merge_request/iid/:iid → .id
+;;   List notes    : GET    /projects/:encoded_path/merge_requests/:id/notes
+;;   Create note   : POST   /projects/:encoded_path/merge_requests/:id/notes
+;;   Update note   : PUT    /projects/:encoded_path/merge_requests/:id/notes/:note_id
+;;   Resolve note  : PUT    /projects/:encoded_path/merge_requests/:id/notes/:note_id
+;;   Reply note    : POST   /projects/:encoded_path/merge_requests/:id/notes/:note_id/replies
+;;   Delete note   : DELETE /projects/:encoded_path/merge_requests/:id/notes/:note_id
+;;   Diff changes  : GET    /projects/:encoded_path/merge_request/:id/changes
 ;;
 ;; Backend contract:
 ;;   :fetch  (callback)                — calls (callback THREADS)
@@ -148,7 +152,9 @@ CALLBACK receives the parsed JSON response (or nil on error)."
 (defun code-review-minimal--gongfeng-resolve-mr-id (callback)
   "Resolve MR global id for the current IID and call CALLBACK with it."
   (if code-review-minimal--mr-id
-      (funcall callback code-review-minimal--mr-id)
+      (progn
+        (message "[crm-gongfeng] resolve-mr-id: reusing cached mr-id=%d" code-review-minimal--mr-id)
+        (funcall callback code-review-minimal--mr-id))
     (let* ((project-id (code-review-minimal--gongfeng-ensure-project-id))
            (url
             (code-review-minimal--gongfeng-api-url
@@ -158,14 +164,19 @@ CALLBACK receives the parsed JSON response (or nil on error)."
              "iid"
              (number-to-string code-review-minimal--mr-iid)))
            (buf (current-buffer)))
-      (message "code-review-minimal: resolving MR id for IID %d ..." code-review-minimal--mr-iid)
+      (message "[crm-gongfeng] resolve-mr-id: fetching iid=%d url=%s"
+               code-review-minimal--mr-iid url)
       (code-review-minimal--gongfeng-http-request
        "GET" url
        nil
        (lambda (mr)
+         (message "[crm-gongfeng] resolve-mr-id: response keys=%S"
+                  (and mr (mapcar #'car mr)))
          (let ((mr-id (and mr (alist-get 'id mr))))
            (if (not (numberp mr-id))
-               (message "code-review-minimal: failed to resolve Gongfeng MR id (response: %S)" mr)
+               (message "[crm-gongfeng] resolve-mr-id: failed — id=%S full response: %S" mr-id mr)
+             (message "[crm-gongfeng] resolve-mr-id: resolved iid=%d → mr-id=%d"
+                      code-review-minimal--mr-iid mr-id)
              (with-current-buffer buf
                (setq code-review-minimal--mr-id mr-id))
              (funcall callback mr-id))))))))
@@ -197,17 +208,22 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
     (code-review-minimal--gongfeng-resolve-mr-id
      (lambda (mr-id)
        (let ((url (code-review-minimal--gongfeng-api-url
-                   "projects" project-id "merge_requests" (number-to-string mr-id) "changes")))
+                   "projects" project-id "merge_request" (number-to-string mr-id) "changes")))
+         (message "[crm-gongfeng] fetch-diff: GET %s" url)
          (code-review-minimal--gongfeng-http-request
           "GET" url nil
           (lambda (resp)
+            (message "[crm-gongfeng] fetch-diff: response type=%s changes-count=%s"
+                     (type-of resp)
+                     (length (alist-get 'files resp)))
             (funcall
              callback
              (mapcar (lambda (c)
                        (list :old-path (alist-get 'old_path c)
                              :new-path (alist-get 'new_path c)
                              :patch (alist-get 'diff c)))
-                     (or (alist-get 'changes resp) '()))))))))))
+                     (or (alist-get 'files resp) '()))))))))))
+
 
 (defun code-review-minimal--gongfeng-normalize-notes (notes)
   "Convert Gongfeng NOTES list into the standard thread plist format."

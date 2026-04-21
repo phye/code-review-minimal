@@ -118,7 +118,8 @@ thread plists.  Both are filtered to the current file."
           ;; Fetch diff first; render hunk overlays, then fetch comment threads.
           (code-review-minimal--fetch-diff-then backend buf iid proj rel-path fetch-comments)
         ;; No diff support or disabled — fetch comments directly.
-        (funcall fetch-comments)))))
+        (progn
+          (funcall fetch-comments))))))
 
 (defun code-review-minimal--post-comment (beg end body)
   "Post a new comment via the current backend, then refresh overlays."
@@ -186,16 +187,18 @@ trigger the next rendering step (typically fetching comment threads)."
         (progn
           (with-current-buffer buf
             (code-review-minimal--clear-hunk-overlays)
-            (when-let ((patch (code-review-minimal--find-patch-for-file cached rel-path)))
-              (code-review-minimal--insert-hunk-overlays patch)))
+            (let ((patch (code-review-minimal--find-patch-for-file cached rel-path)))
+              (when patch
+                (code-review-minimal--insert-hunk-overlays patch))))
           (funcall on-done))
       (funcall (code-review-minimal--backend-prop backend :fetch-diff)
                (lambda (changes)
                  (puthash key changes code-review-minimal--diff-cache)
                  (with-current-buffer buf
                    (code-review-minimal--clear-hunk-overlays)
-                   (when-let ((patch (code-review-minimal--find-patch-for-file changes rel-path)))
-                     (code-review-minimal--insert-hunk-overlays patch)))
+                   (let ((patch (code-review-minimal--find-patch-for-file changes rel-path)))
+                     (when patch
+                       (code-review-minimal--insert-hunk-overlays patch))))
                  (funcall on-done))))))
 
 ;;;; ─── Public Commands ───────────────────────────────────────────────────────

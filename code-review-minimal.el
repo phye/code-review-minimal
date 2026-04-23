@@ -84,6 +84,7 @@
         (dolist (th threads)
           (when (and rel-path
                      (string= (plist-get th :path) rel-path)
+                     (plist-get th :line)
                      (not (and code-review-minimal-hide-resolved
                                (eq (plist-get th :resolved) t))))
             (code-review-minimal--insert-discussion-overlay

@@ -139,7 +139,8 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
   (mapcar
    (lambda (c)
      (let* ((path (alist-get 'path c))
-            (line (alist-get 'line c))
+            (line (or (alist-get 'line c)
+                      (alist-get 'original_line c)))
             (body (alist-get 'body c))
             (id (alist-get 'id c))
             (user (alist-get 'login (alist-get 'user c)))

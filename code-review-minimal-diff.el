@@ -128,7 +128,7 @@ ANCHOR is the new-file line number after which the removed lines should appear;
              (new-count (plist-get hunk :new-count))
              (added-lines (plist-get hunk :added-lines))
              (removed-segments (plist-get hunk :removed-segments))
-             (end-line (+ new-start new-count -1))
+             (end-line (+ new-start new-count -1)))
         ;; Region overlay
         (when (and (>= new-start 1) (<= new-start buf-lines))
           (let* ((beg-pos (save-excursion

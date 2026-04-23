@@ -95,6 +95,8 @@
 
 (defun code-review-minimal--insert-discussion-overlay (line notes resolved first-note-id)
   "Insert overlay after LINE with NOTES thread."
+  (unless line
+    (cl-return-from code-review-minimal--insert-discussion-overlay))
   (let* ((pos (code-review-minimal--line-end-pos line))
          (ov (make-overlay pos pos nil t nil))
          (first-body (alist-get 'body (car notes)))

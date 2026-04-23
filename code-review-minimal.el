@@ -389,7 +389,7 @@ inline comments for the current buffer."
                   ;; file; the diff's new-file line numbers reference this version.
                   (when (and buffer-file-name (file-readable-p buffer-file-name))
                     (revert-buffer t t)))
-              (message "code-review-minimal: git checkout %s failed" branch)))))
+              (user-error "code-review-minimal: git checkout %s failed — aborting review" branch)))))
       ;; Enable mode (which refreshes overlays) or just refresh if already on
       (if (bound-and-true-p code-review-minimal-mode)
           (code-review-minimal--refresh-overlays)

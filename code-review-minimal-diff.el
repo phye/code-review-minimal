@@ -52,7 +52,7 @@ Each element of CHANGES is a plist with :old-path, :new-path, and :patch."
   "Format removed LINES as a display string.
 LINES is a list in push-order (most-recent first); the result is
 returned in original source order."
-  (mapconcat (lambda (l) (concat "  │ - " l)) (nreverse lines) "\n"))
+  (mapconcat (lambda (l) (concat "- " l)) (nreverse lines) "\n"))
 
 (defun code-review-minimal--parse-patch (patch)
   "Parse unified diff PATCH string for a single file.
@@ -157,6 +157,10 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                           (forward-line (1- line))
                           (line-end-position)))
                    (ov (make-overlay beg end)))
+              (overlay-put
+               ov 'before-string
+               (propertize "+ "
+                           'face 'code-review-minimal-hunk-added-face))
               (overlay-put ov 'face 'code-review-minimal-hunk-added-face)
               (overlay-put ov 'code-review-minimal-hunk t)
               (overlay-put ov 'evaporate t)
@@ -173,11 +177,11 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                 (let* ((pos (save-excursion
                               (goto-char (point-min))
                               (point)))
-                       (ov (make-overlay pos pos)))
+                       (ov (make-overlay pos pos nil t nil)))
                   (overlay-put
                    ov 'before-string
-                   (concat (propertize text 'face 'code-review-minimal-hunk-removed-face)
-                           "\n"))
+                   (propertize (concat text "\n")
+                               'face 'code-review-minimal-hunk-removed-face))
                   (overlay-put ov 'code-review-minimal-hunk t)
                   (overlay-put ov 'evaporate t)
                   (overlay-put ov 'priority -10)
@@ -191,7 +195,8 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                      (ov (make-overlay pos pos nil t nil)))
                 (overlay-put
                  ov 'after-string
-                 (concat "\n" (propertize text 'face 'code-review-minimal-hunk-removed-face)))
+                 (propertize (concat "\n" text)
+                             'face 'code-review-minimal-hunk-removed-face))
                 (overlay-put ov 'code-review-minimal-hunk t)
                 (overlay-put ov 'evaporate t)
                 (overlay-put ov 'priority -10)

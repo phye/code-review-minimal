@@ -54,6 +54,17 @@ LINES is a list in push-order (most-recent first); the result is
 returned in original source order."
   (mapconcat #'identity (nreverse lines) "\n"))
 
+(defun code-review-minimal--truncate-removed-lines (lines)
+  "Return LINES truncated to 10 items with a footer if needed."
+  (let ((max-lines 10))
+    (if (> (length lines) max-lines)
+        (append (cl-subseq lines 0 max-lines)
+                (list (propertize
+                       (format "  ── … %d more lines … ──"
+                               (- (length lines) max-lines))
+                       'help-echo "Press C-c C-d to view full removed lines")))
+      lines)))
+
 (defun code-review-minimal--parse-patch (patch)
   "Parse unified diff PATCH string for a single file.
 Return a list of hunk plists:
@@ -179,7 +190,8 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                               (goto-char (point-min))
                               (point)))
                        (ov (make-overlay pos pos nil t nil))
-                       (lines (split-string text "\n"))
+                       (lines (code-review-minimal--truncate-removed-lines
+                               (split-string text "\n")))
                        (marked-text
                         (mapconcat
                          (lambda (l)
@@ -190,9 +202,11 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                          lines "\n")))
                   (overlay-put
                    ov 'before-string
-                   (propertize (concat marked-text "\n")
+                   (propertize (concat "  ── removed ──\n" marked-text "\n")
                                'face 'code-review-minimal-hunk-removed-face))
                   (overlay-put ov 'code-review-minimal-hunk t)
+                  (overlay-put ov 'code-review-minimal-removed-text text)
+                  (overlay-put ov 'code-review-minimal-removed-anchor anchor)
                   (overlay-put ov 'priority -10)
                   (push ov code-review-minimal--hunk-overlays))))
              ;; After anchor line
@@ -202,7 +216,8 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                             (forward-line (1- anchor))
                             (line-end-position)))
                      (ov (make-overlay pos pos nil t nil))
-                     (lines (split-string text "\n"))
+                     (lines (code-review-minimal--truncate-removed-lines
+                             (split-string text "\n")))
                      (marked-text
                       (mapconcat
                        (lambda (l)
@@ -213,9 +228,11 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                        lines "\n")))
                 (overlay-put
                  ov 'after-string
-                 (propertize (concat "\n" marked-text)
+                 (propertize (concat "\n  ── removed ──\n" marked-text)
                              'face 'code-review-minimal-hunk-removed-face))
                 (overlay-put ov 'code-review-minimal-hunk t)
+                (overlay-put ov 'code-review-minimal-removed-text text)
+                (overlay-put ov 'code-review-minimal-removed-anchor anchor)
                 (overlay-put ov 'priority -10)
                 (push ov code-review-minimal--hunk-overlays))))))))))
 

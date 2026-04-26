@@ -96,10 +96,10 @@
 
 (defface code-review-minimal-hunk-removed-face
   '((((background dark))
-     :background "#3a1a1a"
-     :foreground "#c87e7e"
+     :background "#8b1a1a"
+     :foreground "#ffc0c0"
      :extend t)
-    (t :background "#faeded" :foreground "#4a1a1a" :extend t))
+    (t :background "#ffcccc" :foreground "#4a0000" :extend t))
   "Face for removed lines shown inline in the diff overlay."
   :group 'code-review-minimal)
 

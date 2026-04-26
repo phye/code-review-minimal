@@ -193,7 +193,6 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                    (propertize (concat marked-text "\n")
                                'face 'code-review-minimal-hunk-removed-face))
                   (overlay-put ov 'code-review-minimal-hunk t)
-                  (overlay-put ov 'evaporate t)
                   (overlay-put ov 'priority -10)
                   (push ov code-review-minimal--hunk-overlays))))
              ;; After anchor line
@@ -217,7 +216,6 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                  (propertize (concat "\n" marked-text)
                              'face 'code-review-minimal-hunk-removed-face))
                 (overlay-put ov 'code-review-minimal-hunk t)
-                (overlay-put ov 'evaporate t)
                 (overlay-put ov 'priority -10)
                 (push ov code-review-minimal--hunk-overlays))))))))))
 

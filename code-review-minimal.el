@@ -532,6 +532,10 @@ Commands:
               ;; review-url already refreshes overlays and handles the rest; bail out
               (setq code-review-minimal-mode nil)
               (cl-return-from nil))))
+        ;; Set left margin for diff fringe indicators
+        (dolist (win (get-buffer-window-list (current-buffer) nil t))
+          (let ((margins (window-margins win)))
+            (set-window-margins win 2 (cdr margins))))
         ;; Refresh diff and comment overlays
         (code-review-minimal--refresh-overlays))
     ;; Disable
@@ -539,6 +543,9 @@ Commands:
     (code-review-minimal--clear-hunk-overlays)
     (when code-review-minimal--input-overlay
       (code-review-minimal--cancel-comment))
+    (dolist (win (get-buffer-window-list (current-buffer) nil t))
+      (let ((margins (window-margins win)))
+        (set-window-margins win 0 (cdr margins))))
     (setq code-review-minimal--mr-iid nil
           code-review-minimal--mr-id nil
           code-review-minimal--project-info nil

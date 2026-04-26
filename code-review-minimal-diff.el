@@ -52,7 +52,7 @@ Each element of CHANGES is a plist with :old-path, :new-path, and :patch."
   "Format removed LINES as a display string.
 LINES is a list in push-order (most-recent first); the result is
 returned in original source order."
-  (mapconcat (lambda (l) (concat "- " l)) (nreverse lines) "\n"))
+  (mapconcat #'identity (nreverse lines) "\n"))
 
 (defun code-review-minimal--parse-patch (patch)
   "Parse unified diff PATCH string for a single file.
@@ -159,7 +159,8 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                    (ov (make-overlay beg end)))
               (overlay-put
                ov 'before-string
-               (propertize "+ "
+               (propertize " "
+                           'display '((margin left-margin) "+")
                            'face 'code-review-minimal-hunk-added-face))
               (overlay-put ov 'face 'code-review-minimal-hunk-added-face)
               (overlay-put ov 'code-review-minimal-hunk t)
@@ -177,10 +178,19 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                 (let* ((pos (save-excursion
                               (goto-char (point-min))
                               (point)))
-                       (ov (make-overlay pos pos nil t nil)))
+                       (ov (make-overlay pos pos nil t nil))
+                       (lines (split-string text "\n"))
+                       (marked-text
+                        (mapconcat
+                         (lambda (l)
+                           (concat (propertize " "
+                                               'display '((margin left-margin) "-")
+                                               'face 'code-review-minimal-hunk-removed-face)
+                                   " " l))
+                         lines "\n")))
                   (overlay-put
                    ov 'before-string
-                   (propertize (concat text "\n")
+                   (propertize (concat marked-text "\n")
                                'face 'code-review-minimal-hunk-removed-face))
                   (overlay-put ov 'code-review-minimal-hunk t)
                   (overlay-put ov 'evaporate t)
@@ -192,10 +202,19 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                             (goto-char (point-min))
                             (forward-line (1- anchor))
                             (line-end-position)))
-                     (ov (make-overlay pos pos nil t nil)))
+                     (ov (make-overlay pos pos nil t nil))
+                     (lines (split-string text "\n"))
+                     (marked-text
+                      (mapconcat
+                       (lambda (l)
+                         (concat (propertize " "
+                                             'display '((margin left-margin) "-")
+                                             'face 'code-review-minimal-hunk-removed-face)
+                                 " " l))
+                       lines "\n")))
                 (overlay-put
                  ov 'after-string
-                 (propertize (concat "\n" text)
+                 (propertize (concat "\n" marked-text)
                              'face 'code-review-minimal-hunk-removed-face))
                 (overlay-put ov 'code-review-minimal-hunk t)
                 (overlay-put ov 'evaporate t)

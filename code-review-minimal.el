@@ -486,7 +486,9 @@ Use this to override auto-detection."
 ;;;; ─── Minor Mode ────────────────────────────────────────────────────────────
 
 (defvar code-review-minimal-mode-map
-  (make-sparse-keymap)
+  (let ((m (make-sparse-keymap)))
+    (define-key m (kbd "C-c C-d") #'code-review-minimal-view-removed-lines)
+    m)
   "Keymap for `code-review-minimal-mode'.")
 
 ;;;###autoload
@@ -509,6 +511,7 @@ Commands:
   `code-review-minimal-refresh'           - re-fetch comments
   `code-review-minimal-next-hunk'          - go to next diff hunk (cross-file)
   `code-review-minimal-previous-hunk'      - go to previous diff hunk (cross-file)
+  `code-review-minimal-view-removed-lines' - view full removed block at point
   `code-review-minimal-resolve-comment'   - resolve comment at point
   `code-review-minimal-set-backend-for-repo' - change backend for this repo
   `code-review-minimal-finish-review'     - end session and clear all state/cache"

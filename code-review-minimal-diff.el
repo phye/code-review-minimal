@@ -236,6 +236,39 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                 (overlay-put ov 'priority -10)
                 (push ov code-review-minimal--hunk-overlays))))))))))
 
+;;;; ─── View Removed Lines ─────────────────────────────────────────────────────
+
+(defun code-review-minimal--removed-overlay-at-point ()
+  "Find the removed-line overlay whose anchor is closest to the current line."
+  (let ((best nil)
+        (best-dist nil))
+    (dolist (ov code-review-minimal--hunk-overlays)
+      (when (overlay-get ov 'code-review-minimal-removed-text)
+        (let ((anchor (overlay-get ov 'code-review-minimal-removed-anchor)))
+          (when anchor
+            (let ((dist (abs (- (line-number-at-pos (point)) anchor))))
+              (when (or (null best-dist) (< dist best-dist))
+                (setq best ov)
+                (setq best-dist dist)))))))
+    best))
+
+(defun code-review-minimal-view-removed-lines ()
+  "Pop up a buffer with the full removed lines for the deleted block near point."
+  (interactive)
+  (let ((ov (code-review-minimal--removed-overlay-at-point)))
+    (if (not ov)
+        (message "No deleted block near point")
+      (let ((full-text (overlay-get ov 'code-review-minimal-removed-text))
+            (src-mode (with-current-buffer (overlay-buffer ov)
+                        major-mode)))
+        (with-current-buffer (get-buffer-create "*code-review-removed-lines*")
+          (erase-buffer)
+          (insert full-text)
+          (funcall src-mode)
+          (goto-char (point-min))
+          (view-mode))
+        (pop-to-buffer "*code-review-removed-lines*")))))
+
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
 (provide 'code-review-minimal-diff)

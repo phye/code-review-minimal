@@ -107,7 +107,9 @@
     (method url &optional payload callback)
   "Perform async HTTP METHOD request to Gongfeng URL via url-retrieve.
 PAYLOAD is an alist JSON-encoded as the request body.
-CALLBACK receives the parsed JSON response (or nil on error)."
+CALLBACK receives the parsed JSON response (or nil on error).
+The request is aborted after `code-review-minimal-gongfeng-request-timeout'
+seconds to prevent Emacs from hanging on a dead or slow server."
   (let*
       ((token
         (encode-coding-string
@@ -123,31 +125,55 @@ CALLBACK receives the parsed JSON response (or nil on error)."
                ;; encode-coding-string produces a unibyte UTF-8 string,
                ;; which url-http-create-request requires (Emacs Bug#23750).
                (encoded (encode-coding-string body 'utf-8)))
-            encoded))))
-    (url-retrieve
-     url
-     (lambda (status)
-       (let* ((http-status
-               (code-review-minimal--gongfeng-http-status))
-              (err (plist-get status :error))
-              (body (code-review-minimal--gongfeng-response-body)))
-         (cond
-          (err
-           (message
-            "code-review-minimal[gongfeng]: HTTP error %S (URL: %s)\n  body: %s"
-            err url (substring body 0 (min 400 (length body)))))
-          ((and http-status (>= http-status 400))
-           (message
-            "code-review-minimal[gongfeng]: HTTP %d for %s\n  body: %s"
-            http-status
-            url
-            (substring body 0 (min 400 (length body)))))
-          (t
-           (when callback
-             (funcall
-              callback
-              (code-review-minimal--gongfeng-parse-response)))))))
-     nil t)))
+            encoded)))
+       ;; Disable keep-alives so stale connections don't silently block.
+       (url-http-attempt-keepalives nil)
+       ;; timer is declared here and set below so that the url-retrieve
+       ;; callback (which references it) closes over the variable correctly.
+       (watchdog-timer nil)
+       (buf
+        (url-retrieve
+         url
+         (lambda (status)
+           (when watchdog-timer
+             (cancel-timer watchdog-timer))
+           (let* ((http-status
+                   (code-review-minimal--gongfeng-http-status))
+                  (err (plist-get status :error))
+                  (body
+                   (code-review-minimal--gongfeng-response-body)))
+             (cond
+              (err
+               (message
+                "code-review-minimal[gongfeng]: HTTP error %S (URL: %s)\n  body: %s"
+                err url (substring body 0 (min 400 (length body)))))
+              ((and http-status (>= http-status 400))
+               (message
+                "code-review-minimal[gongfeng]: HTTP %d for %s\n  body: %s"
+                http-status
+                url
+                (substring body 0 (min 400 (length body)))))
+              (t
+               (when callback
+                 (funcall
+                  callback
+                  (code-review-minimal--gongfeng-parse-response)))))))
+         nil t)))
+    ;; Set up a watchdog timer that kills the retrieval buffer if the
+    ;; request hasn't completed within the configured timeout.
+    (when buf
+      (setq
+       watchdog-timer
+       (run-with-timer
+        code-review-minimal-gongfeng-request-timeout nil
+        (lambda ()
+          (when (buffer-live-p buf)
+            (message
+             "code-review-minimal[gongfeng]: request timed out after %ds — %s"
+             code-review-minimal-gongfeng-request-timeout url)
+            (kill-buffer buf))))))
+    ;; Return buf so callers can cancel if needed (normally unused).
+    buf))
 
 ;;;; ─── Gongfeng Backend Functions ────────────────────────────────────────────
 

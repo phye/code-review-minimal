@@ -26,12 +26,12 @@
 ;;     `code-review-minimal--overlay-at-point'
 ;;     `code-review-minimal--sorted-overlay-positions'
 ;;
-;; Faces are defined in code-review-minimal-faces.el.
+;; Faces are defined in code-review-minimal-custom.el.
 
 ;;; Code:
 
 (require 'cl-lib)
-(require 'code-review-minimal-faces)
+(require 'code-review-minimal-custom)
 (require 'code-review-minimal-backend)
 
 ;; Forward declarations for dispatch functions defined in code-review-minimal.el.
@@ -113,7 +113,12 @@
 
 (defun code-review-minimal--insert-discussion-overlay
     (line notes resolved first-note-id)
-  "Insert overlay after LINE with NOTES thread."
+  "Insert a comment-thread overlay anchored after LINE.
+LINE is the 1-based line number in the current buffer at which to anchor
+the overlay.  NOTES is the list of note alists belonging to this thread.
+RESOLVED is the resolved state of the thread (t, `:json-false', or nil).
+FIRST-NOTE-ID is the numeric ID of the thread's root note, stored on the
+overlay so that replies and edits can target the correct thread."
   (unless line
     (cl-return-from code-review-minimal--insert-discussion-overlay))
   (let* ((pos (code-review-minimal--line-end-pos line))

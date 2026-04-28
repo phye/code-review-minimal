@@ -272,9 +272,10 @@ GitHub requires the PR head commit SHA for review comments."
 
 (defun code-review-minimal--github-resolve-comment
     (_note-id _note-body _on-success)
-  "Resolve comment (GitHub).
-GitHub does not provide a REST API for resolving review comments;
-use the web interface instead."
+  "No-op resolve for GitHub (NOTE-ID, NOTE-BODY, ON-SUCCESS are unused).
+GitHub's REST API does not expose an endpoint for resolving individual review
+comments; resolution must be performed through the web interface.  This
+function exists only to satisfy the backend contract."
   (message
    "code-review-minimal: GitHub review comments are resolved via the web interface"))
 

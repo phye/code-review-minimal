@@ -13,7 +13,7 @@
 ;;   `code-review-minimal--find-patch-for-file'  — look up patch in change list
 ;;   `code-review-minimal--insert-hunk-overlays' — parse patch and render overlays
 ;;
-;; Faces are defined in code-review-minimal-faces.el:
+;; Faces are defined in code-review-minimal-custom.el:
 ;;   `code-review-minimal-hunk-added-face'
 ;;   `code-review-minimal-hunk-removed-face'
 ;;   `code-review-minimal-hunk-region-face'
@@ -21,12 +21,10 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'code-review-minimal-faces)
+(require 'code-review-minimal-custom)
 
-;; Declare variables from the parent package to avoid
-;; circular-require warnings.
-(defvar-local code-review-minimal--hunk-overlays nil
-  "List of hunk highlight overlays created by `code-review-minimal-mode'.")
+;; Forward declaration — the authoritative defvar-local is in code-review-minimal.el.
+(defvar code-review-minimal--hunk-overlays)
 
 ;;;; ─── Hunk Overlay Cleanup ───────────────────────────────────────────────────
 

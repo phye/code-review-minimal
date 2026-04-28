@@ -252,7 +252,7 @@ for the expected signatures and patterns.
 ### Faces
 
 All faces have dark- and light-theme variants and are defined in
-`code-review-minimal-faces.el`:
+`code-review-minimal-custom.el` alongside the customization variables:
 
 | Face | Used for |
 |------|----------|

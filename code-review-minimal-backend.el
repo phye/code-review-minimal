@@ -8,7 +8,7 @@
 ;; This file is the shared foundation required by all backend files and by
 ;; code-review-minimal.el.  It provides:
 ;;
-;;   Configuration (defgroup + defcustoms)
+;;   Customization variables — see code-review-minimal-custom.el
 ;;   Backend registry (`code-review-minimal-backend-registry',
 ;;                     `code-review-minimal-register-backend',
 ;;                     `code-review-minimal--backend-prop')
@@ -47,81 +47,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'auth-source)
-
-;;;; ─── Configuration ──────────────────────────────────────────────────────────
-
-(defgroup code-review-minimal nil
-  "Code-review overlays for GitHub/GitLab/Gongfeng Pull/Merge Requests."
-  :group 'tools
-  :prefix "code-review-minimal-")
-
-(defcustom code-review-minimal-backend nil
-  "Backend override for code review.
-If nil (the default), the backend is auto-detected from the git remote URL
-and the result is cached per repository.  Only set this when auto-detection
-fails or gives the wrong result for a particular repository.
-
-Valid values: nil (auto), or any backend symbol registered in
-`code-review-minimal-backend-registry' (e.g. `github', `gitlab', `gongfeng').
-
-This variable is intended to be set per-repository via a .dir-locals.el file:
-
-  ((nil . ((code-review-minimal-backend . gongfeng))))
-
-It is declared safe for directory-local use so Emacs will not prompt for
-confirmation when the value is a registered backend symbol."
-  :type
-  '(choice
-    (const :tag "Auto-detect" nil)
-    (const :tag "GitHub" github)
-    (const :tag "GitLab" gitlab)
-    (const :tag "Gongfeng (工蜂)" gongfeng))
-  :group 'code-review-minimal)
-
-;; Derived from the registry at runtime so new backends are automatically valid.
-(put
- 'code-review-minimal-backend 'safe-local-variable
- (lambda (v)
-   (or (null v) (assq v code-review-minimal-backend-registry))))
-
-(defcustom code-review-minimal-github-api-url "https://api.github.com"
-  "Base URL for GitHub API.
-For GitHub Enterprise, use: https://your-github-enterprise.com/api/v3"
-  :type 'string
-  :group 'code-review-minimal)
-
-(defcustom code-review-minimal-gitlab-api-url
-  "https://gitlab.com/api/v4"
-  "Base URL for GitLab API.
-For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
-  :type 'string
-  :group 'code-review-minimal)
-
-(defcustom code-review-minimal-gongfeng-api-url
-  "https://git.woa.com/api/v3"
-  "Base URL for Gongfeng API."
-  :type 'string
-  :group 'code-review-minimal)
-
-(defcustom code-review-minimal-hide-resolved nil
-  "When non-nil, do not render overlays for resolved comment threads."
-  :type 'boolean
-  :group 'code-review-minimal)
-
-(defcustom code-review-minimal-highlight-hunks t
-  "When non-nil, highlight diff hunks with overlays in review buffers.
-Added lines are shown with a green tint, removed lines are displayed
-inline in red, and the overall hunk region gets a subtle background."
-  :type 'boolean
-  :group 'code-review-minimal)
-
-(defcustom code-review-minimal-inline-removed-lines-limit 5
-  "Maximum number of removed lines to display inline.
-When a deleted block exceeds this count, the remaining lines are hidden
-behind a truncation indicator; use `code-review-minimal-view-removed-lines'
-to view the full block in a popup buffer."
-  :type 'integer
-  :group 'code-review-minimal)
+(require 'code-review-minimal-custom)
 
 ;;;; ─── Backend Registry ───────────────────────────────────────────────────────
 ;;

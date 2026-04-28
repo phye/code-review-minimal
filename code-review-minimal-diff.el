@@ -226,7 +226,7 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                              '((margin left-margin) "-")
                              'face
                              'code-review-minimal-hunk-removed-face)
-                            " " l))
+                            l))
                          lines
                          "\n")))
                   (overlay-put
@@ -262,7 +262,7 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                            '((margin left-margin) "-")
                            'face
                            'code-review-minimal-hunk-removed-face)
-                          " " l))
+                          l))
                        lines
                        "\n")))
                 (overlay-put

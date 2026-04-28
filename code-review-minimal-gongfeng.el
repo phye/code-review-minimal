@@ -108,8 +108,7 @@
   "Perform async HTTP METHOD request to Gongfeng URL via url-retrieve.
 PAYLOAD is an alist JSON-encoded as the request body.
 CALLBACK receives the parsed JSON response (or nil on error).
-The request is aborted after `code-review-minimal-gongfeng-request-timeout'
-seconds to prevent Emacs from hanging on a dead or slow server."
+The request is aborted after 30 seconds to prevent Emacs from hanging on a dead or slow server."
   (let*
       ((token
         (encode-coding-string
@@ -165,12 +164,12 @@ seconds to prevent Emacs from hanging on a dead or slow server."
       (setq
        watchdog-timer
        (run-with-timer
-        code-review-minimal-gongfeng-request-timeout nil
+        30 nil
         (lambda ()
           (when (buffer-live-p buf)
             (message
              "code-review-minimal[gongfeng]: request timed out after %ds — %s"
-             code-review-minimal-gongfeng-request-timeout url)
+             30 url)
             (kill-buffer buf))))))
     ;; Return buf so callers can cancel if needed (normally unused).
     buf))

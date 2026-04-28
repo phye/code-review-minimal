@@ -582,6 +582,16 @@ Use this to override auto-detection."
       (code-review-minimal--resolve-comment ov))))
 
 ;;;###autoload
+(defun code-review-minimal-toggle-hide-resolved ()
+  "Toggle hiding of resolved comment threads and refresh overlays."
+  (interactive)
+  (setq code-review-minimal-hide-resolved (not code-review-minimal-hide-resolved))
+  (message "code-review-minimal: %s resolved threads"
+           (if code-review-minimal-hide-resolved "hiding" "showing"))
+  (when (and code-review-minimal-mode code-review-minimal--mr-iid)
+    (code-review-minimal--refresh-overlays)))
+
+;;;###autoload
 (defun code-review-minimal-reply-comment ()
   "Reply to the code review comment thread at point."
   (interactive)
@@ -647,6 +657,7 @@ Commands:
   `code-review-minimal-previous-hunk'      - go to previous diff hunk (cross-file)
   `code-review-minimal-view-removed-lines' - view full removed block at point
   `code-review-minimal-resolve-comment'   - resolve comment at point
+  `code-review-minimal-toggle-hide-resolved' - toggle visibility of resolved threads
   `code-review-minimal-set-backend-for-repo' - change backend for this repo
   `code-review-minimal-finish-review'     - end session and clear all state/cache"
   :lighter " CR"

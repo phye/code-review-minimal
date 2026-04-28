@@ -409,13 +409,15 @@ Skips silently when the user accepts the empty default."
               (progn
                 (with-current-buffer errbuf
                   (erase-buffer))
+                ;; DESTINATION=(errbuf t): stdout→errbuf, stderr merged in.
+                ;; The stderr slot must be nil/t/filename, NOT a buffer object.
                 (call-process "git"
                               nil
-                              (list nil errbuf)
+                              (list errbuf t)
                               nil
                               "checkout"
                               branch))))
-        (when (not (zerop result))
+        (when (not (and (integerp result) (zerop result)))
           ;; Plain checkout failed.  If the name looks like a remote-tracking
           ;; ref (e.g. "origin/feature"), create a local tracking branch.
           (let* ((local-name
@@ -427,14 +429,14 @@ Skips silently when the user accepts the empty default."
                       (erase-buffer))
                     (call-process "git"
                                   nil
-                                  (list nil errbuf)
+                                  (list errbuf t)
                                   nil
                                   "checkout"
                                   "-b"
                                   local-name
                                   "--track"
                                   branch))))
-            (if (and retry-result (zerop retry-result))
+            (if (and (integerp retry-result) (zerop retry-result))
                 (setq branch local-name)
               (let ((err
                      (with-current-buffer errbuf

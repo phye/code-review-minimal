@@ -329,6 +329,9 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                 :json-false)
                (t
                 nil)))
+             (outdated
+              (or (alist-get 'outdated root)
+                  (and note-pos (null latest-pos))))
              (root-id (alist-get 'id root))
              (thread
               (cons
@@ -345,6 +348,7 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                  :line line-num
                  :thread thread
                  :resolved resolved
+                 :outdated outdated
                  :note-id root-id)
                 result))))
     (nreverse result)))

@@ -203,6 +203,12 @@ to view the full block in a popup buffer."
   "Face for the ○open status indicator in a comment overlay."
   :group 'code-review-minimal)
 
+(defface code-review-minimal-outdated-face
+  '((((background dark)) :foreground "#e8a06a" :weight bold)
+    (t :foreground "#80401a" :weight bold))
+  "Face for the ⚠outdated status indicator in a comment overlay."
+  :group 'code-review-minimal)
+
 ;;;; ─── Hunk highlighting faces ───────────────────────────────────────────────
 
 (defface code-review-minimal-hunk-added-face

@@ -65,7 +65,7 @@
 ;;;; ─── Overlay Rendering ─────────────────────────────────────────────────────
 
 (defun code-review-minimal--render-note
-    (note &optional is-first resolved)
+    (note &optional is-first resolved outdated)
   "Render NOTE alist into propertized string."
   (let* ((author-obj (alist-get 'author note))
          (author
@@ -81,6 +81,10 @@
           (cond
            ((not is-first)
             "")
+           (outdated
+            (propertize " ⚠outdated"
+                        'face
+                        'code-review-minimal-outdated-face))
            (is-resolved
             (propertize " ✓resolved"
                         'face
@@ -112,13 +116,15 @@
      header "\n" (propertize body-lines 'face body-face) "\n")))
 
 (defun code-review-minimal--insert-discussion-overlay
-    (line notes resolved first-note-id)
+    (line notes resolved first-note-id &optional outdated)
   "Insert a comment-thread overlay anchored after LINE.
 LINE is the 1-based line number in the current buffer at which to anchor
 the overlay.  NOTES is the list of note alists belonging to this thread.
 RESOLVED is the resolved state of the thread (t, `:json-false', or nil).
 FIRST-NOTE-ID is the numeric ID of the thread's root note, stored on the
-overlay so that replies and edits can target the correct thread."
+overlay so that replies and edits can target the correct thread.
+OUTDATED is non-nil when the comment's original line no longer exists
+in the current diff."
   (unless line
     (cl-return-from code-review-minimal--insert-discussion-overlay))
   (let* ((pos (code-review-minimal--line-end-pos line))
@@ -135,7 +141,7 @@ overlay so that replies and edits can target the correct thread."
                         (lambda (note-and-idx)
                           (code-review-minimal--render-note
                            (car note-and-idx)
-                           (= (cdr note-and-idx) 0) resolved))
+                           (= (cdr note-and-idx) 0) resolved outdated))
                         (cl-loop
                          for
                          n

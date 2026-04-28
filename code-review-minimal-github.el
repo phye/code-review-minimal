@@ -179,6 +179,9 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
             (id (alist-get 'id c))
             (user (alist-get 'login (alist-get 'user c)))
             (created (alist-get 'created_at c))
+            (outdated
+             (and (null (alist-get 'line c))
+                  (alist-get 'original_line c)))
             (note
              `((author . ((name . ,user)))
                (body . ,body)
@@ -188,6 +191,7 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
         :line line
         :thread (list note)
         :resolved nil
+        :outdated outdated
         :note-id id)))
    (or comments '())))
 

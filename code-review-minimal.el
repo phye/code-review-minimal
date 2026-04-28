@@ -99,7 +99,8 @@ hooks are responsible for their lifecycle; diff.el only reads this variable.")
              (plist-get th :line)
              (plist-get th :thread)
              (plist-get th :resolved)
-             (plist-get th :note-id))
+             (plist-get th :note-id)
+             (plist-get th :outdated))
             (cl-incf count)))
         (message
          "code-review-minimal: %d thread(s) in this file, %d total."

@@ -55,8 +55,10 @@ returned in original source order."
   (mapconcat #'identity (nreverse lines) "\n"))
 
 (defun code-review-minimal--truncate-removed-lines (lines)
-  "Return LINES truncated to 10 items with a footer if needed."
-  (let ((max-lines 10))
+  "Return LINES truncated to `code-review-minimal-inline-removed-lines-limit'.
+When truncated, a footer indicator is appended; pressing `C-c C-d' on it
+opens a popup with the full removed block."
+  (let ((max-lines code-review-minimal-inline-removed-lines-limit))
     (if (> (length lines) max-lines)
         (append (cl-subseq lines 0 max-lines)
                 (list (propertize

@@ -330,6 +330,57 @@ Wraps around to the last hunk before the first one."
         (code-review-minimal--goto-hunk (car prev) (cdr prev))
       (user-error "code-review-minimal: diff not cached yet — run `code-review-minimal-review-url' first"))))
 
+(defun code-review-minimal--checkout-branch-for-review ()
+  "Prompt the user to checkout a branch for the current MR/PR review.
+Lists both local and remote-tracking branches.  If a remote-tracking ref
+is selected and plain checkout fails, a local tracking branch is created
+automatically.  Reverts the current buffer after a successful checkout.
+Skips silently when the user accepts the empty default."
+  (let* ((root (or (code-review-minimal--git-root) default-directory))
+         (default-directory root)
+         (local-branches
+          (split-string
+           (shell-command-to-string
+            "git branch '--format=%(refname:short)' 2>/dev/null")
+           "\n" t))
+         (remote-branches
+          (split-string
+           (shell-command-to-string
+            "git branch -r '--format=%(refname:short)' 2>/dev/null")
+           "\n" t))
+         (all-branches (delete-dups (append local-branches remote-branches)))
+         (branch
+          (completing-read "Checkout branch for review (RET to skip): "
+                           all-branches nil nil nil nil "")))
+    (unless (string-empty-p branch)
+      ;; Try plain checkout first (handles local branches and already-fetched
+      ;; remote-tracking refs like "origin/foo" via DWIM).
+      (let ((result (shell-command
+                     (format "git checkout %s"
+                             (shell-quote-argument branch)))))
+        (when (not (zerop result))
+          ;; Plain checkout failed.  If the name looks like a remote-tracking
+          ;; ref (e.g. "origin/feature"), create a local tracking branch.
+          (let* ((local-name
+                  (when (string-match "^[^/]+/\\(.+\\)$" branch)
+                    (match-string 1 branch)))
+                 (retry-result
+                  (when local-name
+                    (shell-command
+                     (format "git checkout -b %s --track %s"
+                             (shell-quote-argument local-name)
+                             (shell-quote-argument branch))))))
+            (if (and retry-result (zerop retry-result))
+                (setq branch local-name)
+              (user-error
+               "code-review-minimal: git checkout %s failed — aborting review"
+               branch))))
+        (message "code-review-minimal: checked out branch %s" branch)
+        ;; Revert the buffer so its content matches the newly-checked-out
+        ;; file; the diff's new-file line numbers reference this version.
+        (when (and buffer-file-name (file-readable-p buffer-file-name))
+          (revert-buffer t t))))))
+
 ;;;###autoload
 (defun code-review-minimal-review-url (url)
   "Start a code review session for the MR/PR at URL.
@@ -367,29 +418,7 @@ inline comments for the current buffer."
                (or (alist-get 'project-id projinfo)
                    (format "%s/%s" (alist-get 'owner projinfo) (alist-get 'repo projinfo)))
                code-review-minimal--current-backend)
-      ;; Prompt user to checkout a branch for this MR/PR.
-      (let* ((root (or (code-review-minimal--git-root) default-directory))
-             (default-directory root)
-             (branches
-              (split-string
-               (shell-command-to-string
-                "git branch '--format=%(refname:short)' 2>/dev/null")
-               "\n" t))
-             (branch
-              (completing-read "Checkout branch for review (RET to skip): "
-                               branches nil nil nil nil "")))
-        (unless (string-empty-p branch)
-          (let ((result (shell-command
-                         (format "git checkout %s"
-                                 (shell-quote-argument branch)))))
-            (if (zerop result)
-                (progn
-                  (message "code-review-minimal: checked out branch %s" branch)
-                  ;; Revert the buffer so its content matches the newly-checked-out
-                  ;; file; the diff's new-file line numbers reference this version.
-                  (when (and buffer-file-name (file-readable-p buffer-file-name))
-                    (revert-buffer t t)))
-              (user-error "code-review-minimal: git checkout %s failed — aborting review" branch)))))
+      (code-review-minimal--checkout-branch-for-review)
       ;; Enable mode (which refreshes overlays) or just refresh if already on
       (if (bound-and-true-p code-review-minimal-mode)
           (code-review-minimal--refresh-overlays)

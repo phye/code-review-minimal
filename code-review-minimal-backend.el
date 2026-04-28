@@ -110,6 +110,14 @@ inline in red, and the overall hunk region gets a subtle background."
   :type 'boolean
   :group 'code-review-minimal)
 
+(defcustom code-review-minimal-inline-removed-lines-limit 5
+  "Maximum number of removed lines to display inline.
+When a deleted block exceeds this count, the remaining lines are hidden
+behind a truncation indicator; use `code-review-minimal-view-removed-lines'
+to view the full block in a popup buffer."
+  :type 'integer
+  :group 'code-review-minimal)
+
 ;;;; ─── Backend Registry ───────────────────────────────────────────────────────
 ;;
 ;; THE single extension point for backends.

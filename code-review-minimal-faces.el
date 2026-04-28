@@ -42,7 +42,11 @@
      :foreground "#9ec8f0"
      :box (:line-width 1 :color "#3a5a7a")
      :extend t)
-    (t :background "#edf4ff" :foreground "#1a3a6e" :box (:line-width 1 :color "#7aaad8") :extend t))
+    (t
+     :background "#edf4ff"
+     :foreground "#1a3a6e"
+     :box (:line-width 1 :color "#7aaad8")
+     :extend t))
   "Face for the body of an unresolved CR comment overlay."
   :group 'code-review-minimal)
 
@@ -52,7 +56,11 @@
      :foreground "#7ec87e"
      :box (:line-width 1 :color "#2e5e2e")
      :extend t)
-    (t :background "#edfaed" :foreground "#1a4a1a" :box (:line-width 1 :color "#6ab86a") :extend t))
+    (t
+     :background "#edfaed"
+     :foreground "#1a4a1a"
+     :box (:line-width 1 :color "#6ab86a")
+     :extend t))
   "Face for the body of a resolved CR comment overlay."
   :group 'code-review-minimal)
 
@@ -62,24 +70,31 @@
      :foreground "#98e898"
      :box (:line-width 1 :color "#366836")
      :extend t)
-    (t :background "#f0fff0" :foreground "#1a4a1a" :box (:line-width 1 :color "#6ab86a") :extend t))
+    (t
+     :background "#f0fff0"
+     :foreground "#1a4a1a"
+     :box (:line-width 1 :color "#6ab86a")
+     :extend t))
   "Face for the comment-input overlay."
   :group 'code-review-minimal)
 
 ;;;; ─── Inline status / header ─────────────────────────────────────────────────
 
 (defface code-review-minimal-header-face
-  '((((background dark)) :foreground "#6ab0e8" :weight bold) (t :foreground "#1a4080" :weight bold))
+  '((((background dark)) :foreground "#6ab0e8" :weight bold)
+    (t :foreground "#1a4080" :weight bold))
   "Face for the header line (author, date) inside a comment overlay."
   :group 'code-review-minimal)
 
 (defface code-review-minimal-resolved-face
-  '((((background dark)) :foreground "#5ec45e" :weight bold) (t :foreground "#1a6a1a" :weight bold))
+  '((((background dark)) :foreground "#5ec45e" :weight bold)
+    (t :foreground "#1a6a1a" :weight bold))
   "Face for the ✓resolved status indicator in a comment overlay."
   :group 'code-review-minimal)
 
 (defface code-review-minimal-unresolved-face
-  '((((background dark)) :foreground "#6ab0e8" :weight bold) (t :foreground "#1a4080" :weight bold))
+  '((((background dark)) :foreground "#6ab0e8" :weight bold)
+    (t :foreground "#1a4080" :weight bold))
   "Face for the ○open status indicator in a comment overlay."
   :group 'code-review-minimal)
 
@@ -104,9 +119,7 @@
   :group 'code-review-minimal)
 
 (defface code-review-minimal-hunk-region-face
-  '((((background dark))
-     :background "#1e2530"
-     :extend t)
+  '((((background dark)) :background "#1e2530" :extend t)
     (t :background "#f0f4f8" :extend t))
   "Face for the overall hunk region background."
   :group 'code-review-minimal)

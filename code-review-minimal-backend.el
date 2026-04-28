@@ -70,16 +70,19 @@ This variable is intended to be set per-repository via a .dir-locals.el file:
 
 It is declared safe for directory-local use so Emacs will not prompt for
 confirmation when the value is a registered backend symbol."
-  :type '(choice (const :tag "Auto-detect" nil)
-                 (const :tag "GitHub" github)
-                 (const :tag "GitLab" gitlab)
-                 (const :tag "Gongfeng (工蜂)" gongfeng))
+  :type
+  '(choice
+    (const :tag "Auto-detect" nil)
+    (const :tag "GitHub" github)
+    (const :tag "GitLab" gitlab)
+    (const :tag "Gongfeng (工蜂)" gongfeng))
   :group 'code-review-minimal)
 
 ;; Derived from the registry at runtime so new backends are automatically valid.
-(put 'code-review-minimal-backend 'safe-local-variable
-     (lambda (v) (or (null v)
-                     (assq v code-review-minimal-backend-registry))))
+(put
+ 'code-review-minimal-backend 'safe-local-variable
+ (lambda (v)
+   (or (null v) (assq v code-review-minimal-backend-registry))))
 
 (defcustom code-review-minimal-github-api-url "https://api.github.com"
   "Base URL for GitHub API.
@@ -87,13 +90,15 @@ For GitHub Enterprise, use: https://your-github-enterprise.com/api/v3"
   :type 'string
   :group 'code-review-minimal)
 
-(defcustom code-review-minimal-gitlab-api-url "https://gitlab.com/api/v4"
+(defcustom code-review-minimal-gitlab-api-url
+  "https://gitlab.com/api/v4"
   "Base URL for GitLab API.
 For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
   :type 'string
   :group 'code-review-minimal)
 
-(defcustom code-review-minimal-gongfeng-api-url "https://git.woa.com/api/v3"
+(defcustom code-review-minimal-gongfeng-api-url
+  "https://git.woa.com/api/v3"
   "Base URL for Gongfeng API."
   :type 'string
   :group 'code-review-minimal)
@@ -164,35 +169,35 @@ package load.")
 ;; void, meaning changes to this table would be invisible until Emacs restarts.
 (setq code-review-minimal-backend-registry
       '((gongfeng
-         :api-url-var  code-review-minimal-gongfeng-api-url
-         :remote-re     "git\\.woa\\.com\\|code\\.tencent\\.com"
-         :fetch         code-review-minimal--gongfeng-fetch-comments
-         :fetch-diff    code-review-minimal--gongfeng-fetch-diff
-         :post          code-review-minimal--gongfeng-post-comment
-         :update        code-review-minimal--gongfeng-update-comment
-         :resolve       code-review-minimal--gongfeng-resolve-comment
-         :reply         code-review-minimal--gongfeng-reply-comment
-         :delete        code-review-minimal--gongfeng-delete-comment)
+         :api-url-var code-review-minimal-gongfeng-api-url
+         :remote-re "git\\.woa\\.com\\|code\\.tencent\\.com"
+         :fetch code-review-minimal--gongfeng-fetch-comments
+         :fetch-diff code-review-minimal--gongfeng-fetch-diff
+         :post code-review-minimal--gongfeng-post-comment
+         :update code-review-minimal--gongfeng-update-comment
+         :resolve code-review-minimal--gongfeng-resolve-comment
+         :reply code-review-minimal--gongfeng-reply-comment
+         :delete code-review-minimal--gongfeng-delete-comment)
         (github
-         :api-url-var  code-review-minimal-github-api-url
-         :remote-re     "github"
-         :fetch         code-review-minimal--github-fetch-comments
-         :fetch-diff    code-review-minimal--github-fetch-diff
-         :post          code-review-minimal--github-post-comment
-         :update        code-review-minimal--github-update-comment
-         :resolve       code-review-minimal--github-resolve-comment
-         :reply         code-review-minimal--github-reply-comment
-         :delete        code-review-minimal--github-delete-comment)
+         :api-url-var code-review-minimal-github-api-url
+         :remote-re "github"
+         :fetch code-review-minimal--github-fetch-comments
+         :fetch-diff code-review-minimal--github-fetch-diff
+         :post code-review-minimal--github-post-comment
+         :update code-review-minimal--github-update-comment
+         :resolve code-review-minimal--github-resolve-comment
+         :reply code-review-minimal--github-reply-comment
+         :delete code-review-minimal--github-delete-comment)
         (gitlab
-         :api-url-var  code-review-minimal-gitlab-api-url
-         :remote-re     "gitlab"
-         :fetch         code-review-minimal--gitlab-fetch-comments
-         :fetch-diff    code-review-minimal--gitlab-fetch-diff
-         :post          code-review-minimal--gitlab-post-comment
-         :update        code-review-minimal--gitlab-update-comment
-         :resolve       code-review-minimal--gitlab-resolve-comment
-         :reply         code-review-minimal--gitlab-reply-comment
-         :delete        code-review-minimal--gitlab-delete-comment)))
+         :api-url-var code-review-minimal-gitlab-api-url
+         :remote-re "gitlab"
+         :fetch code-review-minimal--gitlab-fetch-comments
+         :fetch-diff code-review-minimal--gitlab-fetch-diff
+         :post code-review-minimal--gitlab-post-comment
+         :update code-review-minimal--gitlab-update-comment
+         :resolve code-review-minimal--gitlab-resolve-comment
+         :reply code-review-minimal--gitlab-reply-comment
+         :delete code-review-minimal--gitlab-delete-comment)))
 
 (defun code-review-minimal-register-backend (backend &rest plist)
   "Register BACKEND with its configuration PLIST in the backend registry.
@@ -209,8 +214,10 @@ New entries are prepended so they take precedence over built-in ones for
 :remote-re matching.  If a backend with the same symbol already exists it
 is replaced."
   (setq code-review-minimal-backend-registry
-        (cons (cons backend plist)
-              (assq-delete-all backend code-review-minimal-backend-registry))))
+        (cons
+         (cons backend plist)
+         (assq-delete-all
+          backend code-review-minimal-backend-registry))))
 
 (defun code-review-minimal--backend-prop (backend prop)
   "Return PROP for BACKEND from `code-review-minimal-backend-registry'.
@@ -224,9 +231,11 @@ Signals an error if BACKEND is not registered."
 
 (defun code-review-minimal--detect-backend (remote-url)
   "Auto-detect backend symbol from REMOTE-URL, or nil if unrecognised."
-  (car (cl-find-if (lambda (entry)
-                     (string-match-p (plist-get (cdr entry) :remote-re) remote-url))
-                   code-review-minimal-backend-registry)))
+  (car
+   (cl-find-if
+    (lambda (entry)
+      (string-match-p (plist-get (cdr entry) :remote-re) remote-url))
+    code-review-minimal-backend-registry)))
 
 (defun code-review-minimal--ensure-backend ()
   "Determine and return the backend to use.
@@ -243,18 +252,23 @@ Caches the result per repository."
               (progn
                 (setq code-review-minimal--current-backend backend)
                 (code-review-minimal--save-backend backend)
-                (message "code-review-minimal: auto-detected %s backend from remote" backend))
-            (user-error "code-review-minimal: Cannot detect backend from remote: %s. \
-Please set `code-review-minimal-backend'" remote))))))
+                (message
+                 "code-review-minimal: auto-detected %s backend from remote"
+                 backend))
+            (user-error
+             "code-review-minimal: Cannot detect backend from remote: %s. \
+Please set `code-review-minimal-backend'"
+             remote))))))
   code-review-minimal--current-backend)
 
 ;;;; ─── Token Management ───────────────────────────────────────────────────────
 
 (defun code-review-minimal--git-config (key)
   "Return the value of git config KEY, or nil if unset."
-  (let ((val (string-trim
-              (shell-command-to-string
-               (format "git config --global %s 2>/dev/null" key)))))
+  (let ((val
+         (string-trim
+          (shell-command-to-string
+           (format "git config --global %s 2>/dev/null" key)))))
     (and (not (string-empty-p val)) val)))
 
 (defun code-review-minimal--authinfo-token (host backend)
@@ -265,30 +279,37 @@ Searches in order:
   1. login ^crm                   — dedicated code-review-minimal entry
   2. login <git-config-user>^crm  — per-user entry (git config BACKEND.user)
   3. any login on HOST            — fallback"
-  (let* ((git-user (code-review-minimal--git-config
-                    (format "%s.user" (symbol-name backend))))
+  (let* ((git-user
+          (code-review-minimal--git-config
+           (format "%s.user" (symbol-name backend))))
          (found
-          (or (car (auth-source-search :host host :user "^crm" :max 1))
+          (or (car
+               (auth-source-search :host host :user "^crm" :max 1))
               (and git-user
-                   (car (auth-source-search :host host
-                                            :user (concat git-user "^crm")
-                                            :max 1)))
+                   (car
+                    (auth-source-search
+                     :host host
+                     :user
+                     (concat git-user "^crm")
+                     :max 1)))
               (car (auth-source-search :host host :max 1)))))
     (when found
       (let ((secret (plist-get found :secret)))
-        (if (functionp secret) (funcall secret) secret)))))
+        (if (functionp secret)
+            (funcall secret)
+          secret)))))
 
 (defun code-review-minimal--backend-host (backend)
   "Return the hostname for BACKEND, derived from its base-URL defcustom."
   (replace-regexp-in-string
    "^https?://\\([^/]+\\).*" "\\1"
-   (symbol-value (code-review-minimal--backend-prop backend :api-url-var))))
+   (symbol-value
+    (code-review-minimal--backend-prop backend :api-url-var))))
 
 (defun code-review-minimal--get-token (backend)
   "Get the authentication token for BACKEND from authinfo/netrc."
   (code-review-minimal--authinfo-token
-   (code-review-minimal--backend-host backend)
-   backend))
+   (code-review-minimal--backend-host backend) backend))
 
 (defun code-review-minimal--assert-token (backend)
   "Signal an error if no token is found in authinfo for BACKEND."
@@ -297,17 +318,19 @@ Searches in order:
     (user-error
      "code-review-minimal: No token found for %s.  \
 Add an entry to ~/.authinfo (or ~/.authinfo.gpg), e.g.:\n  machine %s login ^crm password <token>"
-     backend
-     (code-review-minimal--backend-host backend))))
+     backend (code-review-minimal--backend-host backend))))
 
 ;;;; ─── Remote & URL Parsing ───────────────────────────────────────────────────
 
 (defun code-review-minimal--git-remote-url ()
   "Return the URL of the `origin' remote."
   (let ((default-directory
-         (or (locate-dominating-file (or buffer-file-name default-directory) ".git")
+         (or (locate-dominating-file
+              (or buffer-file-name default-directory) ".git")
              default-directory)))
-    (string-trim (shell-command-to-string "git remote get-url origin 2>/dev/null"))))
+    (string-trim
+     (shell-command-to-string
+      "git remote get-url origin 2>/dev/null"))))
 
 (defun code-review-minimal--parse-mr-url (input)
   "Parse a MR/PR URL or bare integer INPUT.
@@ -322,21 +345,26 @@ Supported URL formats:
       (cond
        ;; GitHub: https://HOST/OWNER/REPO/pull[s]/IID
        ((string-match
-         "https?://\\([^/]*github[^/]*\\)/\\([^/]+\\)/\\([^/]+\\)/pulls?/\\([0-9]+\\)" s)
-        (list :iid          (string-to-number (match-string 4 s))
-              :backend      'github
-              :project-info `((owner . ,(match-string 2 s))
-                              (repo  . ,(match-string 3 s)))))
+         "https?://\\([^/]*github[^/]*\\)/\\([^/]+\\)/\\([^/]+\\)/pulls?/\\([0-9]+\\)"
+         s)
+        (list
+         :iid (string-to-number (match-string 4 s))
+         :backend 'github
+         :project-info
+         `((owner . ,(match-string 2 s))
+           (repo . ,(match-string 3 s)))))
        ;; GitLab / Gongfeng: https://HOST/NS/.../REPO/-/merge_requests/IID
        ((string-match
-         "https?://\\([^/]+\\)/\\(.*\\)/-/merge_requests/\\([0-9]+\\)" s)
-        (let* ((host    (match-string 1 s))
-               (path    (match-string 2 s))
-               (iid     (string-to-number (match-string 3 s)))
+         "https?://\\([^/]+\\)/\\(.*\\)/-/merge_requests/\\([0-9]+\\)"
+         s)
+        (let* ((host (match-string 1 s))
+               (path (match-string 2 s))
+               (iid (string-to-number (match-string 3 s)))
                (backend (code-review-minimal--detect-backend host)))
-          (list :iid          iid
-                :backend      backend
-                :project-info `((project-id . ,(url-hexify-string path))))))
+          (list
+           :iid iid
+           :backend backend
+           :project-info `((project-id . ,(url-hexify-string path))))))
        ;; Bare integer fallback
        ((string-match "\\`[0-9]+\\'" s)
         (list :iid (string-to-number s)))))))
@@ -346,7 +374,8 @@ Supported URL formats:
 (defvar code-review-minimal--iid-cache (make-hash-table :test 'equal)
   "In-memory cache mapping git-root (string) → MR IID (integer).")
 
-(defvar code-review-minimal--backend-cache (make-hash-table :test 'equal)
+(defvar code-review-minimal--backend-cache
+  (make-hash-table :test 'equal)
   "In-memory cache mapping git-root (string) → backend symbol.")
 
 (defvar code-review-minimal--diff-cache (make-hash-table :test 'equal)
@@ -355,7 +384,9 @@ The key is produced by `code-review-minimal--diff-cache-key'.")
 
 (defun code-review-minimal--git-root ()
   "Return the absolute path to the git root for the current buffer, or nil."
-  (when-let ((root (locate-dominating-file (or buffer-file-name default-directory) ".git")))
+  (when-let ((root
+              (locate-dominating-file
+               (or buffer-file-name default-directory) ".git")))
     (expand-file-name root)))
 
 (defun code-review-minimal--cache-file (filename)
@@ -367,11 +398,14 @@ The key is produced by `code-review-minimal--diff-cache-key'.")
   "Return the persisted MR IID for the current repo, or nil."
   (let ((root (code-review-minimal--git-root)))
     (or (and root (gethash root code-review-minimal--iid-cache))
-        (when-let ((file (code-review-minimal--cache-file "code-review-minimal-iid")))
+        (when-let ((file
+                    (code-review-minimal--cache-file
+                     "code-review-minimal-iid")))
           (when (file-readable-p file)
-            (let* ((raw (with-temp-buffer
-                          (insert-file-contents file)
-                          (string-trim (buffer-string))))
+            (let* ((raw
+                    (with-temp-buffer
+                      (insert-file-contents file)
+                      (string-trim (buffer-string))))
                    (iid (string-to-number raw)))
               (when (and (integerp iid) (> iid 0))
                 (when root
@@ -382,28 +416,36 @@ The key is produced by `code-review-minimal--diff-cache-key'.")
   "Persist IID for the current repo."
   (when-let ((root (code-review-minimal--git-root)))
     (puthash root iid code-review-minimal--iid-cache))
-  (when-let ((file (code-review-minimal--cache-file "code-review-minimal-iid")))
+  (when-let ((file
+              (code-review-minimal--cache-file
+               "code-review-minimal-iid")))
     (write-region (number-to-string iid) nil file nil 'silent)))
 
 (defun code-review-minimal--load-cached-backend ()
   "Return the persisted backend for the current repo, or nil."
   (let ((root (code-review-minimal--git-root)))
     (or (and root (gethash root code-review-minimal--backend-cache))
-        (when-let ((file (code-review-minimal--cache-file "code-review-minimal-backend")))
+        (when-let ((file
+                    (code-review-minimal--cache-file
+                     "code-review-minimal-backend")))
           (when (file-readable-p file)
-            (let ((backend (with-temp-buffer
-                             (insert-file-contents file)
-                             (string-trim (buffer-string)))))
+            (let ((backend
+                   (with-temp-buffer
+                     (insert-file-contents file)
+                     (string-trim (buffer-string)))))
               (when (> (length backend) 0)
                 (when root
-                  (puthash root backend code-review-minimal--backend-cache))
+                  (puthash
+                   root backend code-review-minimal--backend-cache))
                 (intern backend))))))))
 
 (defun code-review-minimal--save-backend (backend)
   "Persist BACKEND for the current repo."
   (when-let ((root (code-review-minimal--git-root)))
     (puthash root backend code-review-minimal--backend-cache))
-  (when-let ((file (code-review-minimal--cache-file "code-review-minimal-backend")))
+  (when-let ((file
+              (code-review-minimal--cache-file
+               "code-review-minimal-backend")))
     (write-region (symbol-name backend) nil file nil 'silent)))
 
 ;;;; ─── Buffer-local State ─────────────────────────────────────────────────────
@@ -429,7 +471,8 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
   (when buffer-file-name
     (let* ((root (locate-dominating-file buffer-file-name ".git")))
       (if root
-          (file-relative-name buffer-file-name (expand-file-name root))
+          (file-relative-name buffer-file-name
+                              (expand-file-name root))
         (file-name-nondirectory buffer-file-name)))))
 
 (defun code-review-minimal--line-number-at (pos)

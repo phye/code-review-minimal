@@ -14,7 +14,6 @@
 ;;   `code-review-minimal-github-api-url'             — GitHub API base URL
 ;;   `code-review-minimal-gitlab-api-url'             — GitLab API base URL
 ;;   `code-review-minimal-gongfeng-api-url'           — Gongfeng API base URL
-;;   `code-review-minimal-gongfeng-request-timeout'   — per-request timeout (s)
 ;;   `code-review-minimal-hide-resolved'              — suppress resolved threads
 ;;   `code-review-minimal-highlight-hunks'            — enable diff hunk overlays
 ;;   `code-review-minimal-inline-removed-lines-limit' — truncation threshold
@@ -116,15 +115,6 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
   "https://git.woa.com/api/v3"
   "Base URL for Gongfeng API."
   :type 'string
-  :group 'code-review-minimal)
-
-;;;; ─── Gongfeng HTTP ──────────────────────────────────────────────────────────
-
-(defcustom code-review-minimal-gongfeng-request-timeout 30
-  "Timeout in seconds for Gongfeng HTTP requests.
-If a request does not complete within this many seconds it is aborted
-and an error is logged to the *Messages* buffer."
-  :type 'integer
   :group 'code-review-minimal)
 
 ;;;; ─── Display ────────────────────────────────────────────────────────────────

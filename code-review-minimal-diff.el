@@ -60,7 +60,7 @@ returned in original source order."
     (if (> (length lines) max-lines)
         (append (cl-subseq lines 0 max-lines)
                 (list (propertize
-                       (format "  ── … %d more lines … ──"
+                       (format "── … %d more lines … ──"
                                (- (length lines) max-lines))
                        'help-echo "Press C-c C-d to view full removed lines")))
       lines)))
@@ -202,7 +202,7 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                          lines "\n")))
                   (overlay-put
                    ov 'before-string
-                   (propertize (concat "  ── removed ──\n" marked-text "\n")
+                   (propertize (concat marked-text "\n")
                                'face 'code-review-minimal-hunk-removed-face))
                   (overlay-put ov 'code-review-minimal-hunk t)
                   (overlay-put ov 'code-review-minimal-removed-text text)
@@ -228,7 +228,7 @@ ANCHOR is the new-file line number after which the removed lines should appear;
                        lines "\n")))
                 (overlay-put
                  ov 'after-string
-                 (propertize (concat "\n  ── removed ──\n" marked-text)
+                 (propertize (concat "\n" marked-text)
                              'face 'code-review-minimal-hunk-removed-face))
                 (overlay-put ov 'code-review-minimal-hunk t)
                 (overlay-put ov 'code-review-minimal-removed-text text)

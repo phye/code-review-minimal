@@ -82,6 +82,8 @@ No token variables to set — see Authentication below.
 Tokens are read exclusively from `~/.authinfo` (or `~/.authinfo.gpg`).
 No tokens are stored in Emacs custom variables.
 
+### Shared entry (simplest)
+
 Add one entry per forge host, using `login ^crm` to distinguish these entries
 from tokens used by other Emacs tools (e.g. Magit/ghub use `login ^`):
 
@@ -99,15 +101,16 @@ machine gitlab.company.com  login ^crm password <token>
 machine github.company.com  login ^crm password <token>
 ```
 
-### Per-user entries (optional)
+### Per-user entry
 
-If you have multiple accounts on the same host, you can scope entries by
-username.  Set the git config key `<backend>.user` globally and use
-`<username>^crm` as the login:
+If you have multiple accounts on the same host, set the git config key
+`<backend>.user` globally first:
 
 ```bash
 git config --global gongfeng.user yourname
 ```
+
+Then add a per-user entry to `~/.authinfo` using `<username>^crm` as the login:
 
 ```
 machine git.woa.com  login yourname^crm  password <token>
@@ -249,7 +252,7 @@ for the expected signatures and patterns.
 ### Faces
 
 All faces have dark- and light-theme variants and are defined in
-`code-review-minimal-faces.el`:
+`code-review-minimal-custom.el` alongside the customization variables:
 
 | Face | Used for |
 |------|----------|

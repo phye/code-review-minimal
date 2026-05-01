@@ -210,13 +210,13 @@ Searches in order:
            (format "%s.user" (symbol-name backend))))
          (found
           (or (car
-               (auth-source-search :host host :user "^crm" :max 1))
+               (auth-source-search :host host :user "\\^crm" :max 1))
               (and git-user
                    (car
                     (auth-source-search
                      :host host
                      :user
-                     (concat git-user "^crm")
+                     (concat git-user "\\^crm")
                      :max 1)))
               (car (auth-source-search :host host :max 1)))))
     (when found

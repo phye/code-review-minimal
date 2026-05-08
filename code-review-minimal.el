@@ -378,6 +378,93 @@ Wraps around to the last hunk before the first one."
       (user-error
        "code-review-minimal: diff not cached yet — run `code-review-minimal-review-url' first"))))
 
+(defun code-review-minimal--all-thread-positions ()
+  "Return a sorted list of (ABS-PATH . LINE) for every comment thread overlay.
+Scans all live buffers with `code-review-minimal-mode' active.
+Returns nil when no comment overlays are found."
+  (let ((result nil))
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (and (bound-and-true-p code-review-minimal-mode)
+                   code-review-minimal--overlays)
+          (dolist (ov code-review-minimal--overlays)
+            (when (and (overlay-buffer ov)
+                       (overlay-get ov 'code-review-minimal))
+              (let* ((pos (overlay-start ov))
+                     (line (line-number-at-pos pos))
+                     (abs (expand-file-name
+                           (or buffer-file-name default-directory))))
+                (push (cons abs line) result)))))))
+    ;; Deduplicate and sort.
+    (delete-dups
+     (sort result
+           (lambda (a b)
+             (or (string< (car a) (car b))
+                 (and (string= (car a) (car b))
+                      (< (cdr a) (cdr b)))))))))
+
+(defun code-review-minimal--current-thread-key ()
+  "Return a (ABS-PATH . LINE) key representing the current position.
+LINE is the current line number; ABS-PATH is the current buffer's absolute path."
+  (cons (expand-file-name (or buffer-file-name default-directory))
+        (line-number-at-pos)))
+
+;;;###autoload
+(defun code-review-minimal-next-thread ()
+  "Move point to the next comment thread, opening other files if needed.
+If `code-review-minimal-mode' is not active in the current buffer, it is
+enabled automatically (which may prompt for a review URL if no MR is cached).
+Wraps around to the first thread after the last one."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (code-review-minimal-mode 1))
+  (let* ((all (code-review-minimal--all-thread-positions))
+         (cur (code-review-minimal--current-thread-key)))
+    (message
+     "[crm-thread] next-thread: all-count=%d cur=%S"
+     (length all) cur)
+    (let ((next
+           (or (cl-find-if
+                (lambda (entry)
+                  (or (string< (car cur) (car entry))
+                      (and (string= (car cur) (car entry))
+                           (< (cdr cur) (cdr entry)))))
+                all)
+               ;; wrap around to first thread
+               (car all))))
+      (if next
+          (code-review-minimal--goto-hunk (car next) (cdr next))
+        (user-error
+         "code-review-minimal: no comment threads found")))))
+
+;;;###autoload
+(defun code-review-minimal-previous-thread ()
+  "Move point to the previous comment thread, opening other files if needed.
+If `code-review-minimal-mode' is not active in the current buffer, it is
+enabled automatically (which may prompt for a review URL if no MR is cached).
+Wraps around to the last thread before the first one."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (code-review-minimal-mode 1))
+  (let* ((all (code-review-minimal--all-thread-positions))
+         (cur (code-review-minimal--current-thread-key)))
+    (message
+     "[crm-thread] previous-thread: all-count=%d cur=%S"
+     (length all) cur)
+    (let ((prev
+           (or (cl-find-if
+                (lambda (entry)
+                  (or (string< (car entry) (car cur))
+                      (and (string= (car entry) (car cur))
+                           (< (cdr entry) (cdr cur)))))
+                (reverse all))
+               ;; wrap around to last thread
+               (car (last all)))))
+      (if prev
+          (code-review-minimal--goto-hunk (car prev) (cdr prev))
+        (user-error
+         "code-review-minimal: no comment threads found")))))
+
 (defun code-review-minimal--checkout-branch-for-review ()
   "Prompt the user to checkout a branch for the current MR/PR review.
 Lists both local and remote-tracking branches.  If a remote-tracking ref
@@ -654,6 +741,8 @@ Commands:
   `code-review-minimal-reply-comment'     - reply to comment thread at point
   `code-review-minimal-delete-comment'    - delete comment at point
   `code-review-minimal-refresh'           - re-fetch comments
+  `code-review-minimal-next-thread'        - go to next comment thread (cross-file)
+  `code-review-minimal-previous-thread'    - go to previous comment thread (cross-file)
   `code-review-minimal-next-hunk'          - go to next diff hunk (cross-file)
   `code-review-minimal-previous-hunk'      - go to previous diff hunk (cross-file)
   `code-review-minimal-view-removed-lines' - view full removed block at point

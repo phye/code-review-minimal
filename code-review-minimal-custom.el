@@ -27,7 +27,7 @@
 ;;     `code-review-minimal-header-face'        — author/date header line
 ;;     `code-review-minimal-resolved-face'      — ✓resolved status indicator
 ;;     `code-review-minimal-unresolved-face'    — ○open status indicator
-;;   Hunk highlighting:
+;;   Hunk highlighting (background-only — syntax faces show through):
 ;;     `code-review-minimal-hunk-added-face'    — added lines
 ;;     `code-review-minimal-hunk-removed-face'  — removed lines (inline)
 ;;     `code-review-minimal-hunk-region-face'   — overall hunk region background
@@ -212,21 +212,19 @@ to view the full block in a popup buffer."
 ;;;; ─── Hunk highlighting faces ───────────────────────────────────────────────
 
 (defface code-review-minimal-hunk-added-face
-  '((((background dark))
-     :background "#1a3a1a"
-     :foreground "#7ec87e"
-     :extend t)
-    (t :background "#edfaed" :foreground "#1a4a1a" :extend t))
-  "Face for lines added in the current MR/PR diff."
+  '((((background dark)) :background "#1a3a1a" :extend t)
+    (t :background "#edfaed" :extend t))
+  "Face for lines added in the current MR/PR diff.
+Only a background tint is applied so that syntax-highlighting foreground
+colours on the underlying buffer text are not overridden."
   :group 'code-review-minimal)
 
 (defface code-review-minimal-hunk-removed-face
-  '((((background dark))
-     :background "#8b1a1a"
-     :foreground "#ffc0c0"
-     :extend t)
-    (t :background "#ffcccc" :foreground "#4a0000" :extend t))
-  "Face for removed lines shown inline in the diff overlay."
+  '((((background dark)) :background "#8b1a1a" :extend t)
+    (t :background "#ffcccc" :extend t))
+  "Face for removed lines shown inline in the diff overlay.
+Only a background tint is applied so that syntax-highlighting foreground
+colours on the underlying buffer text are not overridden."
   :group 'code-review-minimal)
 
 (defface code-review-minimal-hunk-region-face

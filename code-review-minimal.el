@@ -465,82 +465,142 @@ Wraps around to the last thread before the first one."
         (user-error
          "code-review-minimal: no comment threads found")))))
 
+(defconst code-review-minimal--mr-ref-formats
+  '((github   . "pull/%d/head")
+    (gitlab   . "merge-requests/%d/head")
+    (gongfeng . "merge-requests/%d/head"))
+  "Backend → server-side ref pattern for the MR/PR head commit.
+GitHub publishes `refs/pull/<id>/head'; GitLab and Gongfeng publish
+`refs/merge-requests/<iid>/head'.  These refs can be fetched directly
+via git, so the source branch can be checked out without any extra
+backend API call.")
+
+(defun code-review-minimal--auto-checkout-source-branch ()
+  "Fetch and checkout the source branch of the current MR/PR via git refs.
+
+Uses the well-known ref published by the forge for the MR/PR head — see
+`code-review-minimal--mr-ref-formats' — so no backend API call is made.
+The ref is fetched from `origin' into FETCH_HEAD; a local branch named
+`crm/<backend>-<iid>' is then created or reset to that commit and
+checked out.  The current buffer is reverted on success.
+
+Returns t on success, nil on failure or unsupported backend.  Callers
+should fall back to a manual flow when nil is returned."
+  (let* ((backend code-review-minimal--current-backend)
+         (iid code-review-minimal--mr-iid)
+         (fmt (alist-get backend code-review-minimal--mr-ref-formats)))
+    (when (and backend iid fmt)
+      (let* ((default-directory
+              (or (code-review-minimal--git-root) default-directory))
+             (ref (format fmt iid))
+             (local (format "crm/%s-%d" backend iid))
+             (errbuf (get-buffer-create " *crm-fetch-err*")))
+        (with-current-buffer errbuf (erase-buffer))
+        ;; Step 1: fetch the head ref into FETCH_HEAD.
+        (let ((fetch-rc
+               (call-process "git" nil (list errbuf t) nil
+                             "fetch" "origin" ref)))
+          (when (and (integerp fetch-rc) (zerop fetch-rc))
+            ;; Step 2: create or reset the local branch from FETCH_HEAD
+            ;; and check it out.  `-B' is safe even when already on the
+            ;; target branch (it updates the branch ref and working tree).
+            (with-current-buffer errbuf (erase-buffer))
+            (let ((co-rc
+                   (call-process "git" nil (list errbuf t) nil
+                                 "checkout" "-B" local "FETCH_HEAD")))
+              (when (and (integerp co-rc) (zerop co-rc))
+                (message
+                 "code-review-minimal: checked out source branch %s"
+                 local)
+                (when (and buffer-file-name
+                           (file-readable-p buffer-file-name))
+                  (revert-buffer t t))
+                t))))))))
+
 (defun code-review-minimal--checkout-branch-for-review ()
-  "Prompt the user to checkout a branch for the current MR/PR review.
-Lists both local and remote-tracking branches.  If a remote-tracking ref
-is selected and plain checkout fails, a local tracking branch is created
-automatically.  Reverts the current buffer after a successful checkout.
-Skips silently when the user accepts the empty default."
-  (let* ((root (or (code-review-minimal--git-root) default-directory))
-         (default-directory root)
-         (local-branches
-          (split-string
-           (shell-command-to-string
-            "git branch '--format=%(refname:short)' 2>/dev/null")
-           "\n" t))
-         (remote-branches
-          (split-string
-           (shell-command-to-string
-            "git branch -r '--format=%(refname:short)' 2>/dev/null")
-           "\n" t))
-         (all-branches
-          (delete-dups (append local-branches remote-branches)))
-         (branch
-          (completing-read
-           "Checkout branch for review (RET to skip): " all-branches
-           nil nil nil nil "")))
-    (unless (string-empty-p branch)
-      ;; Try plain checkout first (handles local branches and already-fetched
-      ;; remote-tracking refs like "origin/foo" via DWIM).
-      (let* ((errbuf (get-buffer-create " *crm-checkout-err*"))
-             (result
-              (progn
-                (with-current-buffer errbuf
-                  (erase-buffer))
-                ;; DESTINATION=(errbuf t): stdout→errbuf, stderr merged in.
-                ;; The stderr slot must be nil/t/filename, NOT a buffer object.
-                (call-process "git"
-                              nil
-                              (list errbuf t)
-                              nil
-                              "checkout"
-                              branch))))
-        (when (not (and (integerp result) (zerop result)))
-          ;; Plain checkout failed.  If the name looks like a remote-tracking
-          ;; ref (e.g. "origin/feature"), create a local tracking branch.
-          (let* ((local-name
-                  (when (string-match "^[^/]+/\\(.+\\)$" branch)
-                    (match-string 1 branch)))
-                 (retry-result
-                  (when local-name
-                    (with-current-buffer errbuf
-                      (erase-buffer))
-                    (call-process "git"
-                                  nil
-                                  (list errbuf t)
-                                  nil
-                                  "checkout"
-                                  "-b"
-                                  local-name
-                                  "--track"
-                                  branch))))
-            (if (and (integerp retry-result) (zerop retry-result))
-                (setq branch local-name)
-              (let ((err
-                     (with-current-buffer errbuf
-                       (buffer-string))))
-                (user-error
-                 "code-review-minimal: git checkout %s failed%s"
-                 branch
-                 (if (string-empty-p err)
-                     ""
-                   (format " — %s" (string-trim err))))))))
-        (message "code-review-minimal: checked out branch %s" branch)
-        ;; Revert the buffer so its content matches the newly-checked-out
-        ;; file; the diff's new-file line numbers reference this version.
-        (when (and buffer-file-name
-                   (file-readable-p buffer-file-name))
-          (revert-buffer t t))))))
+  "Checkout the source branch for the current MR/PR review.
+
+First tries `code-review-minimal--auto-checkout-source-branch', which
+fetches the well-known forge ref and checks it out — no backend API
+call.  On success, no prompt is shown.
+
+If automatic checkout is unsupported or fails (origin unreachable, ref
+missing, etc.), falls back to listing local and remote-tracking
+branches and prompting the user to pick one.  If a remote-tracking ref
+is selected and plain checkout fails, a local tracking branch is
+created automatically.  Reverts the current buffer after a successful
+checkout.  Skips silently when the user accepts the empty default."
+  (unless (code-review-minimal--auto-checkout-source-branch)
+    (let* ((root (or (code-review-minimal--git-root) default-directory))
+           (default-directory root)
+           (local-branches
+            (split-string
+             (shell-command-to-string
+              "git branch '--format=%(refname:short)' 2>/dev/null")
+             "\n" t))
+           (remote-branches
+            (split-string
+             (shell-command-to-string
+              "git branch -r '--format=%(refname:short)' 2>/dev/null")
+             "\n" t))
+           (all-branches
+            (delete-dups (append local-branches remote-branches)))
+           (branch
+            (completing-read
+             "Checkout branch for review (RET to skip): " all-branches
+             nil nil nil nil "")))
+      (unless (string-empty-p branch)
+        ;; Try plain checkout first (handles local branches and already-fetched
+        ;; remote-tracking refs like "origin/foo" via DWIM).
+        (let* ((errbuf (get-buffer-create " *crm-checkout-err*"))
+               (result
+                (progn
+                  (with-current-buffer errbuf
+                    (erase-buffer))
+                  ;; DESTINATION=(errbuf t): stdout→errbuf, stderr merged in.
+                  ;; The stderr slot must be nil/t/filename, NOT a buffer object.
+                  (call-process "git"
+                                nil
+                                (list errbuf t)
+                                nil
+                                "checkout"
+                                branch))))
+          (when (not (and (integerp result) (zerop result)))
+            ;; Plain checkout failed.  If the name looks like a remote-tracking
+            ;; ref (e.g. "origin/feature"), create a local tracking branch.
+            (let* ((local-name
+                    (when (string-match "^[^/]+/\\(.+\\)$" branch)
+                      (match-string 1 branch)))
+                   (retry-result
+                    (when local-name
+                      (with-current-buffer errbuf
+                        (erase-buffer))
+                      (call-process "git"
+                                    nil
+                                    (list errbuf t)
+                                    nil
+                                    "checkout"
+                                    "-b"
+                                    local-name
+                                    "--track"
+                                    branch))))
+              (if (and (integerp retry-result) (zerop retry-result))
+                  (setq branch local-name)
+                (let ((err
+                       (with-current-buffer errbuf
+                         (buffer-string))))
+                  (user-error
+                   "code-review-minimal: git checkout %s failed%s"
+                   branch
+                   (if (string-empty-p err)
+                       ""
+                     (format " — %s" (string-trim err))))))))
+          (message "code-review-minimal: checked out branch %s" branch)
+          ;; Revert the buffer so its content matches the newly-checked-out
+          ;; file; the diff's new-file line numbers reference this version.
+          (when (and buffer-file-name
+                     (file-readable-p buffer-file-name))
+            (revert-buffer t t)))))))
 
 ;;;###autoload
 (defun code-review-minimal-review-url (url)

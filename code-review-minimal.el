@@ -950,7 +950,13 @@ per-repo cache files (.git/code-review-minimal-iid and
 .git/code-review-minimal-backend) so the next session starts fresh."
   (interactive)
   (let ((root (code-review-minimal--git-root)))
-    ;; 0. Restore the original branch if one was saved.
+    ;; 0. Disable mode in all live buffers first so overlays are removed
+    ;; before the working tree changes underneath them.
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (bound-and-true-p code-review-minimal-mode)
+          (code-review-minimal-mode -1))))
+    ;; 1. Restore the original branch if one was saved.
     (when-let ((original (code-review-minimal--load-original-branch)))
       (let ((errbuf (get-buffer-create " *crm-finish-err*")))
         (with-current-buffer errbuf (erase-buffer))
@@ -972,11 +978,6 @@ per-repo cache files (.git/code-review-minimal-iid and
                (if (string-empty-p err)
                    ""
                  (format " — %s" (string-trim err)))))))))
-    ;; 1. Disable mode in all live buffers for this repo.
-    (dolist (buf (buffer-list))
-      (with-current-buffer buf
-        (when (bound-and-true-p code-review-minimal-mode)
-          (code-review-minimal-mode -1))))
     ;; 2. Clear the global diff cache entirely.
     (clrhash code-review-minimal--diff-cache)
     ;; 3. Clear the in-memory IID and backend caches.

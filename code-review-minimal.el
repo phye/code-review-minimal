@@ -514,6 +514,26 @@ session."
            (insert-file-contents file)
            (buffer-string)))))))
 
+(defun code-review-minimal--review-in-progress-p ()
+  "Return non-nil if a review session is currently active.
+Checks for:
+- `code-review-minimal-mode' active in any live buffer
+- cached IID or backend for the current repository
+- saved original-branch file for the current repository"
+  (or
+   ;; Mode active in any buffer
+   (cl-some (lambda (buf)
+              (with-current-buffer buf
+                (bound-and-true-p code-review-minimal-mode)))
+            (buffer-list))
+   ;; Cached IID in memory
+   (when-let ((root (code-review-minimal--git-root)))
+     (gethash root code-review-minimal--iid-cache))
+   ;; Cached IID on disk
+   (code-review-minimal--load-cached-iid)
+   ;; Saved original branch
+   (code-review-minimal--load-original-branch)))
+
 (defconst code-review-minimal--mr-ref-formats
   '((github   . "pull/%d/head")
     (gitlab   . "merge-requests/%d/head")
@@ -675,6 +695,10 @@ Automatically detects the backend (github/gitlab/gongfeng), project, and
 MR IID from the URL, then enables `code-review-minimal-mode' and fetches
 inline comments for the current buffer."
   (interactive (list (read-string "MR/PR URL: ")))
+  (when (code-review-minimal--review-in-progress-p)
+    (user-error
+     "code-review-minimal: a review is already in progress.  \
+Call `code-review-minimal-finish-review' first"))
   (let ((parsed (code-review-minimal--parse-mr-url url)))
     (unless (and parsed (plist-get parsed :iid))
       (user-error

@@ -514,6 +514,65 @@ session."
            (insert-file-contents file)
            (buffer-string)))))))
 
+(defun code-review-minimal--stash-worktree ()
+  "Stash the current worktree if dirty and record the stash marker.
+Returns t if a stash was created, nil if the worktree was already clean.
+Signals an error if the stash command fails."
+  (let ((default-directory
+         (or (code-review-minimal--git-root) default-directory))
+        (status
+         (string-trim
+          (shell-command-to-string
+           "git status --porcelain 2>/dev/null"))))
+    (when (not (string-empty-p status))
+      (let ((errbuf (get-buffer-create " *crm-stash-err*")))
+        (with-current-buffer errbuf (erase-buffer))
+        (let ((rc (call-process "git" nil (list errbuf t) nil
+                                "stash" "push" "-m"
+                                "code-review-minimal auto-stash")))
+          (if (and (integerp rc) (zerop rc))
+              (progn
+                (code-review-minimal--record-stash)
+                (message
+                 "code-review-minimal: stashed local changes")
+                t)
+            (let ((err (with-current-buffer errbuf (buffer-string))))
+              (user-error
+               "code-review-minimal: git stash failed%s"
+               (if (string-empty-p err)
+                   ""
+                 (format " — %s" (string-trim err)))))))))))
+
+(defun code-review-minimal--record-stash ()
+  "Record that a stash was created for this review session."
+  (when-let ((root (code-review-minimal--git-root)))
+    (let ((file (expand-file-name "code-review-minimal-stash"
+                                  (expand-file-name ".git" root))))
+      (write-region "" nil file nil 'silent))))
+
+(defun code-review-minimal--pop-stash ()
+  "Pop the auto-stash if one was recorded for this review session."
+  (when-let ((root (code-review-minimal--git-root)))
+    (let ((file (expand-file-name "code-review-minimal-stash"
+                                  (expand-file-name ".git" root))))
+      (when (file-exists-p file)
+        (let ((default-directory root)
+              (errbuf (get-buffer-create " *crm-stash-err*")))
+          (with-current-buffer errbuf (erase-buffer))
+          (let ((rc (call-process "git" nil (list errbuf t) nil
+                                  "stash" "pop")))
+            (if (and (integerp rc) (zerop rc))
+                (progn
+                  (delete-file file)
+                  (message
+                   "code-review-minimal: restored stashed changes"))
+              (let ((err (with-current-buffer errbuf (buffer-string))))
+                (message
+                 "code-review-minimal: git stash pop failed%s"
+                 (if (string-empty-p err)
+                     ""
+                   (format " — %s" (string-trim err))))))))))))
+
 (defun code-review-minimal--review-in-progress-p ()
   "Return non-nil if a review session is currently active.
 Checks for:
@@ -571,7 +630,9 @@ should fall back to a manual flow when nil is returned."
                (call-process "git" nil (list errbuf t) nil
                              "fetch" "origin" ref)))
           (when (and (integerp fetch-rc) (zerop fetch-rc))
-            ;; Step 2: create or reset the local branch from FETCH_HEAD
+            ;; Step 2: stash dirty worktree so checkout cannot fail.
+            (code-review-minimal--stash-worktree)
+            ;; Step 3: create or reset the local branch from FETCH_HEAD
             ;; and check it out.  `-B' is safe even when already on the
             ;; target branch (it updates the branch ref and working tree).
             (with-current-buffer errbuf (erase-buffer))
@@ -625,6 +686,8 @@ the user accepts the empty default."
              "Checkout branch for review (RET to skip): " all-branches
              nil nil nil nil "")))
       (unless (string-empty-p branch)
+        ;; Stash dirty worktree so checkout cannot fail.
+        (code-review-minimal--stash-worktree)
         ;; Try plain checkout first (handles local branches and already-fetched
         ;; remote-tracking refs like "origin/foo" via DWIM).
         (let* ((errbuf (get-buffer-create " *crm-checkout-err*"))
@@ -966,6 +1029,7 @@ per-repo cache files (.git/code-review-minimal-iid and
               (progn
                 (message
                  "code-review-minimal: restored original branch %s" original)
+                (code-review-minimal--pop-stash)
                 (dolist (buf (buffer-list))
                   (with-current-buffer buf
                     (when (and buffer-file-name
@@ -989,7 +1053,8 @@ per-repo cache files (.git/code-review-minimal-iid and
       (dolist (fname
                '("code-review-minimal-iid"
                  "code-review-minimal-backend"
-                 "code-review-minimal-original-branch"))
+                 "code-review-minimal-original-branch"
+                 "code-review-minimal-stash"))
         (let ((file
                (expand-file-name fname
                                  (expand-file-name ".git" root))))

@@ -8,10 +8,13 @@
 ;; Unified diff patch parsing and hunk highlight overlay rendering for
 ;; code-review-minimal.
 ;;
-;; Public API (called from code-review-minimal.el):
+;; Public API:
 ;;   `code-review-minimal--clear-hunk-overlays'  — remove all hunk overlays
 ;;   `code-review-minimal--find-patch-for-file'  — look up patch in change list
 ;;   `code-review-minimal--insert-hunk-overlays' — parse patch and render overlays
+;;   `code-review-minimal-view-removed-lines'     — popup with full removed block
+;;   `code-review-minimal-next-hunk'              — go to next diff hunk
+;;   `code-review-minimal-previous-hunk'          — go to previous diff hunk
 ;;
 ;; Faces are defined in code-review-minimal-custom.el:
 ;;   `code-review-minimal-hunk-added-face'

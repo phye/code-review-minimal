@@ -95,9 +95,9 @@
                   "code-review-minimal-diff")
 
 ;;
-;; These functions are the only callers of overlay and re-fetch logic.
-;; Backend functions receive callbacks / on-success thunks and must not touch
-;; overlays or trigger re-fetches themselves.
+;; These functions are the only orchestrators that trigger rendering
+;; and re-fetch logic.  Backend functions receive callbacks / on-success
+;; thunks and must not touch overlays or trigger re-fetches themselves.
 
 (defun code-review-minimal--refresh-overlays ()
   "Fetch diff and comments via the current backend and render overlays.
@@ -247,6 +247,22 @@ per-repo cache files (.git/code-review-minimal-iid and
             (delete-file file)))))
     (message
      "code-review-minimal: review session finished and all state cleared.")))
+
+;;;###autoload
+(defun code-review-minimal-refresh ()
+  "Re-fetch comments (and diff, if enabled) and refresh overlays.
+Use this to update the display after external changes (e.g. a colleague
+posted a new comment)."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (user-error
+     "code-review-minimal: please enable `code-review-minimal-mode' first"))
+  (unless code-review-minimal--mr-iid
+    (user-error "code-review-minimal: no MR IID set"))
+  (code-review-minimal--assert-token
+   code-review-minimal--current-backend)
+  (message "code-review-minimal: refreshing...")
+  (code-review-minimal--refresh-overlays))
 
 ;;;###autoload
 (defun code-review-minimal-set-backend-for-repo (backend)

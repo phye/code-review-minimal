@@ -37,7 +37,7 @@
 ;;     `code-review-minimal--mr-id'
 ;;     `code-review-minimal--project-info'
 ;;     `code-review-minimal--current-backend'
-;;   Utility helpers shared with overlay/diff layers
+;;   Utility helpers shared with diff and comment layers
 ;;     `code-review-minimal--relative-file-path'
 ;;     `code-review-minimal--line-number-at'
 

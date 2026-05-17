@@ -36,8 +36,9 @@
 
 (require 'code-review-minimal-custom)
 (require 'code-review-minimal-backend)
+(require 'code-review-minimal-branch)
 (require 'code-review-minimal-diff)
-(require 'code-review-minimal-overlay)
+(require 'code-review-minimal-comment)
 (require 'code-review-minimal-github)
 (require 'code-review-minimal-gitlab)
 (require 'code-review-minimal-gongfeng)

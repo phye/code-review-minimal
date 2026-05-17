@@ -22,9 +22,13 @@
 
 (require 'cl-lib)
 (require 'code-review-minimal-custom)
+(require 'code-review-minimal-backend)
 
-;; Forward declaration — the authoritative defvar-local is in code-review-minimal.el.
-(defvar code-review-minimal--hunk-overlays)
+;; Forward declaration — authoritative definition is in code-review-minimal.el.
+(defvar code-review-minimal-mode)
+
+(defvar-local code-review-minimal--hunk-overlays nil
+  "List of hunk highlight overlays managed by `code-review-minimal-mode'.")
 
 ;;;; ─── Hunk Overlay Cleanup ───────────────────────────────────────────────────
 
@@ -315,6 +319,192 @@ ANCHOR is the new-file line number after which the removed lines should appear;
           (goto-char (point-min))
           (view-mode))
         (pop-to-buffer "*code-review-removed-lines*")))))
+
+;;;; ─── Hunk Navigation Helpers ────────────────────────────────────────────────
+
+(defun code-review-minimal--all-hunk-positions ()
+  "Return a sorted list of (ABS-PATH . LINE) for every hunk in the current MR diff.
+ABS-PATH is the absolute path to the new-side file; LINE is the hunk's new-start line.
+Returns nil when no diff data is cached yet."
+  (let*
+      ((backend code-review-minimal--current-backend)
+       (iid code-review-minimal--mr-iid)
+       (proj code-review-minimal--project-info)
+       (root (code-review-minimal--git-root))
+       ;; Primary: look up by exact cache key
+       (changes
+        (when (and backend iid proj)
+          (gethash
+           (code-review-minimal--diff-cache-key
+            backend iid proj)
+           code-review-minimal--diff-cache)))
+       ;; Fallback: scan every cached entry and pick the first whose files
+       ;; resolve under the current git root.  This handles the case where
+       ;; buffer-local vars are stale or nil (e.g. after navigating to a new
+       ;; file that hasn't fully inherited MR state yet).
+       (changes-fallback
+        (unless changes
+          (when root
+            (let ((found nil))
+              (maphash
+               (lambda (_k v)
+                 (unless found
+                   (let* ((first (car v))
+                          (rel
+                           (or (plist-get first :new-path)
+                               (plist-get first :old-path))))
+                     (when (and rel
+                                (file-exists-p
+                                 (expand-file-name rel root)))
+                       (setq found v)))))
+               code-review-minimal--diff-cache)
+              found))))
+       (changes (or changes changes-fallback))
+       (result nil))
+    (if (not (and changes root))
+        (progn
+          (when (called-interactively-p 'any)
+            (message
+             "code-review-minimal: diff not yet cached — run `code-review-minimal-review-url' first"))
+          nil)
+      (dolist (c changes)
+        (let* ((rel
+                (or (plist-get c :new-path) (plist-get c :old-path)))
+               (abs (expand-file-name rel root))
+               (patch (plist-get c :patch)))
+          (when (and rel patch)
+            (dolist (hunk (code-review-minimal--parse-patch patch))
+              (push (cons abs (plist-get hunk :new-start)) result)))))
+      (sort result
+            (lambda (a b)
+              (or (string< (car a) (car b))
+                  (and (string= (car a) (car b))
+                       (< (cdr a) (cdr b)))))))))
+
+(defun code-review-minimal--current-hunk-key ()
+  "Return a (ABS-PATH . LINE) key representing the current position.
+LINE is the current line number; ABS-PATH is the current buffer's absolute path."
+  (cons (or buffer-file-name default-directory) (line-number-at-pos)))
+
+(defun code-review-minimal--goto-hunk (abs-path line)
+  "Visit ABS-PATH (opening it if needed) and move point to LINE.
+Ensures `code-review-minimal-mode' is active in the target buffer.
+MR state (backend, iid, project-info) is propagated from the calling buffer
+into the target buffer so that hunk navigation continues to work there."
+  ;; Capture MR state from the calling buffer before any buffer switch.
+  (let ((src-backend code-review-minimal--current-backend)
+        (src-iid code-review-minimal--mr-iid)
+        (src-mr-id code-review-minimal--mr-id)
+        (src-proj code-review-minimal--project-info))
+    (unless (and buffer-file-name
+                 (string=
+                  (expand-file-name buffer-file-name) abs-path))
+      (find-file abs-path))
+    ;; Propagate MR state into the new buffer if it is not already set.
+    (when (and src-backend (not code-review-minimal--current-backend))
+      (setq code-review-minimal--current-backend src-backend))
+    (when (and src-iid (not code-review-minimal--mr-iid))
+      (setq code-review-minimal--mr-iid src-iid))
+    (when (and src-mr-id (not code-review-minimal--mr-id))
+      (setq code-review-minimal--mr-id src-mr-id))
+    (when (and src-proj (not code-review-minimal--project-info))
+      (setq code-review-minimal--project-info src-proj))
+    (unless (bound-and-true-p code-review-minimal-mode)
+      (code-review-minimal-mode 1))
+    (goto-char (point-min))
+    (forward-line (1- line))))
+
+;;;###autoload
+(defun code-review-minimal-next-hunk ()
+  "Move point to the next diff hunk, opening other files in the MR if needed.
+Wraps around to the first hunk after the last one."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (user-error
+     "code-review-minimal: please enable `code-review-minimal-mode' first"))
+  (let* ((all (code-review-minimal--all-hunk-positions))
+         (cur (code-review-minimal--current-hunk-key)))
+    (message
+     "[crm-hunk] next-hunk: backend=%S iid=%S cache-size=%d all-count=%d cur=%S"
+     code-review-minimal--current-backend
+     code-review-minimal--mr-iid
+     (hash-table-count code-review-minimal--diff-cache)
+     (length all)
+     cur)
+    (let ((next
+           (or (cl-find-if
+                (lambda (entry)
+                  (or (string< (car cur) (car entry))
+                      (and (string= (car cur) (car entry))
+                           (< (cdr cur) (cdr entry)))))
+                all)
+               ;; wrap around to first hunk
+               (car all))))
+      (if next
+          (code-review-minimal--goto-hunk (car next) (cdr next))
+        (user-error
+         "code-review-minimal: diff not cached yet — run `code-review-minimal-review-url' first")))))
+
+;;;###autoload
+(defun code-review-minimal-previous-hunk ()
+  "Move point to the previous diff hunk, opening other files in the MR if needed.
+Wraps around to the last hunk before the first one."
+  (interactive)
+  (unless (bound-and-true-p code-review-minimal-mode)
+    (user-error
+     "code-review-minimal: please enable `code-review-minimal-mode' first"))
+  (let* ((all (code-review-minimal--all-hunk-positions))
+         (cur (code-review-minimal--current-hunk-key))
+         (prev
+          (or (cl-find-if
+               (lambda (entry)
+                 (or (string< (car entry) (car cur))
+                     (and (string= (car entry) (car cur))
+                          (< (cdr entry) (cdr cur)))))
+               (reverse all))
+              ;; wrap around to last hunk
+              (car (last all)))))
+    (if prev
+        (code-review-minimal--goto-hunk (car prev) (cdr prev))
+      (user-error
+       "code-review-minimal: diff not cached yet — run `code-review-minimal-review-url' first"))))
+
+;;;; ─── Diff Cache ─────────────────────────────────────────────────────────────
+
+(defun code-review-minimal--diff-cache-key (backend iid project-info)
+  "Return a cache key for the diff of BACKEND IID PROJECT-INFO."
+  (list backend iid project-info))
+
+(defun code-review-minimal--fetch-diff-then
+    (backend buf iid project-info rel-path on-done)
+  "Fetch or reuse cached diff for BACKEND IID; render hunk overlays in BUF for REL-PATH.
+After hunk overlays are in place, call ON-DONE (a zero-argument function) to
+trigger the next rendering step (typically fetching comment threads)."
+  (let* ((key
+          (code-review-minimal--diff-cache-key
+           backend iid project-info))
+         (cached (gethash key code-review-minimal--diff-cache)))
+    (if cached
+        (with-current-buffer buf
+          (code-review-minimal--clear-hunk-overlays)
+          (let ((patch
+                 (code-review-minimal--find-patch-for-file
+                  cached rel-path)))
+            (when patch
+              (code-review-minimal--insert-hunk-overlays patch)))
+          (funcall on-done))
+      (funcall (code-review-minimal--backend-prop backend :fetch-diff)
+               (lambda (changes)
+                 (puthash key changes code-review-minimal--diff-cache)
+                 (with-current-buffer buf
+                   (code-review-minimal--clear-hunk-overlays)
+                   (let ((patch
+                          (code-review-minimal--find-patch-for-file
+                           changes rel-path)))
+                     (when patch
+                       (code-review-minimal--insert-hunk-overlays
+                        patch)))
+                   (funcall on-done)))))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 

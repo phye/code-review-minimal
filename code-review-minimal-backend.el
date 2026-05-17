@@ -40,7 +40,6 @@
 ;;   Utility helpers shared with overlay/diff layers
 ;;     `code-review-minimal--relative-file-path'
 ;;     `code-review-minimal--line-number-at'
-;;     `code-review-minimal--line-end-pos'
 
 ;;; Code:
 
@@ -406,13 +405,6 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
   (save-excursion
     (goto-char pos)
     (line-number-at-pos)))
-
-(defun code-review-minimal--line-end-pos (line)
-  "Return buffer position at end of LINE (1-based)."
-  (save-excursion
-    (goto-char (point-min))
-    (forward-line (1- line))
-    (line-end-position)))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 

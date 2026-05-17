@@ -69,6 +69,7 @@
 (require 'code-review-minimal-github)
 (require 'code-review-minimal-gitlab)
 (require 'code-review-minimal-gongfeng)
+(require 'code-review-minimal-codeberg)
 
 ;; Forward declarations for functions defined in sibling files.
 ;; These are evaluated at compile time via `require' above; the

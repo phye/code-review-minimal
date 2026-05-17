@@ -122,7 +122,17 @@ package load.")
          :update code-review-minimal--gitlab-update-comment
          :resolve code-review-minimal--gitlab-resolve-comment
          :reply code-review-minimal--gitlab-reply-comment
-         :delete code-review-minimal--gitlab-delete-comment)))
+         :delete code-review-minimal--gitlab-delete-comment)
+        (codeberg
+         :api-url-var code-review-minimal-codeberg-api-url
+         :remote-re "codeberg"
+         :fetch code-review-minimal--codeberg-fetch-comments
+         :fetch-diff code-review-minimal--codeberg-fetch-diff
+         :post code-review-minimal--codeberg-post-comment
+         :update code-review-minimal--codeberg-update-comment
+         :resolve code-review-minimal--codeberg-resolve-comment
+         :reply code-review-minimal--codeberg-reply-comment
+         :delete code-review-minimal--codeberg-delete-comment)))
 
 (defun code-review-minimal-register-backend (backend &rest plist)
   "Register BACKEND with its configuration PLIST in the backend registry.
@@ -275,6 +285,16 @@ Supported URL formats:
         (list
          :iid (string-to-number (match-string 4 s))
          :backend 'github
+         :project-info
+         `((owner . ,(match-string 2 s))
+           (repo . ,(match-string 3 s)))))
+       ;; Codeberg: https://HOST/OWNER/REPO/pulls/IID
+       ((string-match
+         "https?://\\([^/]*codeberg[^/]*\\)/\\([^/]+\\)/\\([^/]+\\)/pulls/\\([0-9]+\\)"
+         s)
+        (list
+         :iid (string-to-number (match-string 4 s))
+         :backend 'codeberg
          :project-info
          `((owner . ,(match-string 2 s))
            (repo . ,(match-string 3 s)))))

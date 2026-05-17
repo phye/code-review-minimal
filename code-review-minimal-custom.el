@@ -14,6 +14,7 @@
 ;;   `code-review-minimal-github-api-url'             — GitHub API base URL
 ;;   `code-review-minimal-gitlab-api-url'             — GitLab API base URL
 ;;   `code-review-minimal-gongfeng-api-url'           — Gongfeng API base URL
+;;   `code-review-minimal-codeberg-api-url'           — Codeberg API base URL
 ;;   `code-review-minimal-hide-resolved'              — suppress resolved threads
 ;;   `code-review-minimal-highlight-hunks'            — enable diff hunk overlays
 ;;   `code-review-minimal-inline-removed-lines-limit' — truncation threshold
@@ -56,7 +57,7 @@
 ;;;; ─── Group ──────────────────────────────────────────────────────────────────
 
 (defgroup code-review-minimal nil
-  "Code-review overlays for GitHub/GitLab/Gongfeng Pull/Merge Requests."
+  "Code-review overlays for GitHub/GitLab/Gongfeng/Codeberg Pull/Merge Requests."
   :group 'tools
   :prefix "code-review-minimal-")
 
@@ -69,7 +70,7 @@ and the result is cached per repository.  Only set this when auto-detection
 fails or gives the wrong result for a particular repository.
 
 Valid values: nil (auto), or any backend symbol registered in
-`code-review-minimal-backend-registry' (e.g. `github', `gitlab', `gongfeng').
+`code-review-minimal-backend-registry' (e.g. `github', `gitlab', `gongfeng', `codeberg').
 
 This variable is intended to be set per-repository via a .dir-locals.el file:
 
@@ -82,7 +83,8 @@ confirmation when the value is a registered backend symbol."
     (const :tag "Auto-detect" nil)
     (const :tag "GitHub" github)
     (const :tag "GitLab" gitlab)
-    (const :tag "Gongfeng (工蜂)" gongfeng))
+    (const :tag "Gongfeng (工蜂)" gongfeng)
+    (const :tag "Codeberg" codeberg))
   :group 'code-review-minimal)
 
 ;; Derived from the registry at runtime so new backends are automatically valid.
@@ -114,6 +116,13 @@ For self-hosted GitLab, use: https://your-gitlab.com/api/v4"
 (defcustom code-review-minimal-gongfeng-api-url
   "https://git.woa.com/api/v3"
   "Base URL for Gongfeng API."
+  :type 'string
+  :group 'code-review-minimal)
+
+(defcustom code-review-minimal-codeberg-api-url
+  "https://codeberg.org/api/v1"
+  "Base URL for Codeberg (Gitea) API.
+For self-hosted Gitea instances, use: https://your-gitea.com/api/v1"
   :type 'string
   :group 'code-review-minimal)
 

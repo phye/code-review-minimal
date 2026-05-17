@@ -42,6 +42,7 @@
 (require 'code-review-minimal-github)
 (require 'code-review-minimal-gitlab)
 (require 'code-review-minimal-gongfeng)
+(require 'code-review-minimal-codeberg)
 (require 'code-review-minimal)
 
 ;;;; ───────────────────────────────────────────────────────────────────────────
@@ -77,6 +78,13 @@
   "Test retrieving a property from the gongfeng backend."
   (should (eq (code-review-minimal--backend-prop 'gongfeng :api-url-var)
               'code-review-minimal-gongfeng-api-url)))
+
+(ert-deftest crm-backend-prop-codeberg ()
+  "Test retrieving a property from the codeberg backend."
+  (should (eq (code-review-minimal--backend-prop 'codeberg :api-url-var)
+              'code-review-minimal-codeberg-api-url))
+  (should (eq (code-review-minimal--backend-prop 'codeberg :fetch)
+              'code-review-minimal--codeberg-fetch-comments)))
 
 (ert-deftest crm-backend-prop-unknown ()
   "Test that an unknown backend signals an error."
@@ -129,6 +137,13 @@
   (should (eq (code-review-minimal--detect-backend "https://code.tencent.com/ns/project.git")
               'gongfeng)))
 
+(ert-deftest crm-detect-backend-codeberg ()
+  "Test auto-detection of codeberg from remote URL."
+  (should (eq (code-review-minimal--detect-backend "https://codeberg.org/owner/repo.git")
+              'codeberg))
+  (should (eq (code-review-minimal--detect-backend "git@codeberg.org:owner/repo.git")
+              'codeberg)))
+
 (ert-deftest crm-detect-backend-unknown ()
   "Test that unknown remotes return nil."
   (should (null (code-review-minimal--detect-backend "https://bitbucket.org/foo/bar.git"))))
@@ -170,6 +185,15 @@
     (should (eq (plist-get result :backend) 'gongfeng))
     (should (equal (alist-get 'project-id (plist-get result :project-info))
                    "ns%2Fproject"))))
+
+(ert-deftest crm-parse-mr-url-codeberg ()
+  "Test parsing a Codeberg PR URL."
+  (let ((result (code-review-minimal--parse-mr-url
+                 "https://codeberg.org/owner/repo/pulls/42")))
+    (should (equal (plist-get result :iid) 42))
+    (should (eq (plist-get result :backend) 'codeberg))
+    (should (equal (alist-get 'owner (plist-get result :project-info)) "owner"))
+    (should (equal (alist-get 'repo (plist-get result :project-info)) "repo"))))
 
 (ert-deftest crm-parse-mr-url-bare-integer ()
   "Test parsing a bare integer (IID only)."
@@ -225,6 +249,35 @@
 (ert-deftest crm-parse-github-repo-nil ()
   "Test parsing nil GitHub remote."
   (should (null (code-review-minimal--parse-github-repo nil))))
+
+;;;; ───────────────────────────────────────────────────────────────────────────
+;;;;  Codeberg repo parsing
+;;;; ───────────────────────────────────────────────────────────────────────────
+
+(ert-deftest crm-parse-codeberg-repo-ssh ()
+  "Test parsing Codeberg SSH remote."
+  (let ((result (code-review-minimal--parse-codeberg-repo
+                 "git@codeberg.org:foo/bar.git")))
+    (should (equal (car result) "foo"))
+    (should (equal (cdr result) "bar"))))
+
+(ert-deftest crm-parse-codeberg-repo-https ()
+  "Test parsing Codeberg HTTPS remote."
+  (let ((result (code-review-minimal--parse-codeberg-repo
+                 "https://codeberg.org/foo/bar.git")))
+    (should (equal (car result) "foo"))
+    (should (equal (cdr result) "bar"))))
+
+(ert-deftest crm-parse-codeberg-repo-no-git-suffix ()
+  "Test parsing Codeberg remote without .git suffix."
+  (let ((result (code-review-minimal--parse-codeberg-repo
+                 "https://codeberg.org/foo/bar")))
+    (should (equal (car result) "foo"))
+    (should (equal (cdr result) "bar"))))
+
+(ert-deftest crm-parse-codeberg-repo-nil ()
+  "Test parsing nil Codeberg remote."
+  (should (null (code-review-minimal--parse-codeberg-repo nil))))
 
 ;;;; ───────────────────────────────────────────────────────────────────────────
 ;;;;  Diff patch parsing

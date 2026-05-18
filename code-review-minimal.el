@@ -201,6 +201,9 @@ Call `code-review-minimal-finish-review' first"))
                          (setq code-review-minimal--mr-source-branch source))
                        (when target
                          (setq code-review-minimal--mr-target-branch target))
+                       (message "[code-review-minimal] source-branch=%s target-branch=%s"
+                                code-review-minimal--mr-source-branch
+                                code-review-minimal--mr-target-branch)
                        (funcall proceed)))
           (funcall proceed))))))
 

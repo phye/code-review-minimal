@@ -251,19 +251,13 @@ the user accepts the empty default."
            (all-branches
             (delete-dups (append local-branches remote-branches)))
            (branch
-            (completing-read
-             (if (and (boundp 'code-review-minimal--mr-source-branch)
-                      code-review-minimal--mr-source-branch)
-                 (format "Checkout branch for review (source: %s, RET to skip): "
-                         code-review-minimal--mr-source-branch)
-               "Checkout branch for review (RET to skip): ")
-             all-branches
-             nil nil
-             (when (and (boundp 'code-review-minimal--mr-source-branch)
-                        code-review-minimal--mr-source-branch
-                        (member code-review-minimal--mr-source-branch all-branches))
-               code-review-minimal--mr-source-branch)
-             nil "")))
+            (if (and (boundp 'code-review-minimal--mr-source-branch)
+                     code-review-minimal--mr-source-branch)
+                code-review-minimal--mr-source-branch
+              (completing-read
+               "Checkout branch for review (RET to skip): "
+               all-branches
+               nil nil nil nil ""))))
       (unless (string-empty-p branch)
         ;; Stash dirty worktree so checkout cannot fail.
         (code-review-minimal--stash-worktree)

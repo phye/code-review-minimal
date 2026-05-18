@@ -35,6 +35,8 @@
 ;;   Buffer-local state variables
 ;;     `code-review-minimal--mr-iid'
 ;;     `code-review-minimal--mr-id'
+;;     `code-review-minimal--mr-source-branch'
+;;     `code-review-minimal--mr-target-branch'
 ;;     `code-review-minimal--project-info'
 ;;     `code-review-minimal--current-backend'
 ;;   Utility helpers shared with diff and comment layers
@@ -73,6 +75,17 @@
 ;;     where CHANGES is a list of plists with keys:
 ;;       :old-path, :new-path, :patch (unified diff string, may be nil)
 ;;
+;;   :resolve-branches  Function (callback)  [optional]
+;;     Fetch only the MR source and target branch names, then call:
+;;       (funcall callback SOURCE-BRANCH TARGET-BRANCH)
+;;     where both args are strings (or nil if unavailable).
+;;     All built-in backends supply this hook.  GitHub and Codeberg
+;;     implement it via a lightweight GET to the PR endpoint (head.ref /
+;;     base.ref); GitLab and Gongfeng reuse the resolve-mr-id GET which
+;;     already returns branch names as a side-effect.  Omitting this key
+;;     is allowed for custom backends that always resolve branches from
+;;     git refs alone.
+;;
 ;;   :post    Function (beg end body on-success)
 ;;   :update  Function (note-id body on-success)
 ;;   :resolve Function (note-id note-body on-success)
@@ -97,6 +110,7 @@ package load.")
          :api-url-var code-review-minimal-gongfeng-api-url
          :remote-re "git\\.woa\\.com\\|code\\.tencent\\.com"
          :fetch code-review-minimal--gongfeng-fetch-comments
+         :resolve-branches code-review-minimal--gongfeng-resolve-branches
          :fetch-diff code-review-minimal--gongfeng-fetch-diff
          :post code-review-minimal--gongfeng-post-comment
          :update code-review-minimal--gongfeng-update-comment
@@ -107,6 +121,7 @@ package load.")
          :api-url-var code-review-minimal-github-api-url
          :remote-re "github"
          :fetch code-review-minimal--github-fetch-comments
+         :resolve-branches code-review-minimal--github-resolve-branches
          :fetch-diff code-review-minimal--github-fetch-diff
          :post code-review-minimal--github-post-comment
          :update code-review-minimal--github-update-comment
@@ -117,6 +132,7 @@ package load.")
          :api-url-var code-review-minimal-gitlab-api-url
          :remote-re "gitlab"
          :fetch code-review-minimal--gitlab-fetch-comments
+         :resolve-branches code-review-minimal--gitlab-resolve-branches
          :fetch-diff code-review-minimal--gitlab-fetch-diff
          :post code-review-minimal--gitlab-post-comment
          :update code-review-minimal--gitlab-update-comment
@@ -127,6 +143,7 @@ package load.")
          :api-url-var code-review-minimal-codeberg-api-url
          :remote-re "codeberg"
          :fetch code-review-minimal--codeberg-fetch-comments
+         :resolve-branches code-review-minimal--codeberg-resolve-branches
          :fetch-diff code-review-minimal--codeberg-fetch-diff
          :post code-review-minimal--codeberg-post-comment
          :update code-review-minimal--codeberg-update-comment
@@ -141,6 +158,10 @@ BACKEND is a symbol (e.g. `myfoo').  PLIST must supply:
   :api-url-var  — symbol of the defcustom holding the API base URL
   :remote-re     — regexp for auto-detecting this backend from a remote URL
   :fetch         — function (callback) fetching threads and passing them to callback
+  :resolve-branches — optional function (callback) fetching only source and target
+                      branch names: calls (callback SOURCE TARGET), both strings or nil.
+                      All built-in backends supply this.  Omit for custom backends
+                      that always resolve branches via git refs alone.
   :post          — function (beg end body on-success) posting a new comment
   :update        — function (note-id body on-success) updating a comment
   :resolve       — function (note-id note-body on-success) resolving a thread
@@ -400,6 +421,12 @@ The key is produced by `code-review-minimal--diff-cache-key'.")
 
 (defvar-local code-review-minimal--mr-id nil
   "MR global integer id resolved from `code-review-minimal--mr-iid'.")
+
+(defvar-local code-review-minimal--mr-source-branch nil
+  "Source branch name for the MR currently being reviewed, or nil if unknown.")
+
+(defvar-local code-review-minimal--mr-target-branch nil
+  "Target/base branch name for the MR currently being reviewed, or nil if unknown.")
 
 (defvar-local code-review-minimal--project-info nil
   "Project info alist with backend-specific keys.

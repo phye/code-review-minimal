@@ -164,12 +164,13 @@ Checks for:
 (defconst code-review-minimal--mr-ref-formats
   '((github   . "pull/%d/head")
     (gitlab   . "merge-requests/%d/head")
-    (gongfeng . "merge-requests/%d/head"))
+    (gongfeng . "merge-requests/%d/head")
+    (codeberg . "pull/%d/head"))
   "Backend → server-side ref pattern for the MR/PR head commit.
-GitHub publishes `refs/pull/<id>/head'; GitLab and Gongfeng publish
-`refs/merge-requests/<iid>/head'.  These refs can be fetched directly
-via git, so the source branch can be checked out without any extra
-backend API call.")
+GitHub and Codeberg/Forgejo publish `refs/pull/<id>/head'; GitLab and
+Gongfeng publish `refs/merge-requests/<iid>/head'.  These refs can be
+fetched directly via git, so the source branch can be checked out without
+any extra backend API call.")
 
 (defun code-review-minimal--auto-checkout-source-branch ()
   "Fetch and checkout the source branch of the current MR/PR via git refs.
@@ -251,8 +252,18 @@ the user accepts the empty default."
             (delete-dups (append local-branches remote-branches)))
            (branch
             (completing-read
-             "Checkout branch for review (RET to skip): " all-branches
-             nil nil nil nil "")))
+             (if (and (boundp 'code-review-minimal--mr-source-branch)
+                      code-review-minimal--mr-source-branch)
+                 (format "Checkout branch for review (source: %s, RET to skip): "
+                         code-review-minimal--mr-source-branch)
+               "Checkout branch for review (RET to skip): ")
+             all-branches
+             nil nil
+             (when (and (boundp 'code-review-minimal--mr-source-branch)
+                        code-review-minimal--mr-source-branch
+                        (member code-review-minimal--mr-source-branch all-branches))
+               code-review-minimal--mr-source-branch)
+             nil "")))
       (unless (string-empty-p branch)
         ;; Stash dirty worktree so checkout cannot fail.
         (code-review-minimal--stash-worktree)

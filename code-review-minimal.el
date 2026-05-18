@@ -111,8 +111,6 @@ thread plists.  Both are filtered to the current file."
         (backend code-review-minimal--current-backend)
         (iid code-review-minimal--mr-iid)
         (proj code-review-minimal--project-info))
-    ;; Define the comment-fetch thunk so it can be called from the diff callback
-    ;; or directly when diff is skipped.
     (let ((fetch-comments
            (lambda ()
              (funcall
@@ -124,12 +122,9 @@ thread plists.  Both are filtered to the current file."
                (code-review-minimal--backend-prop
                 backend
                 :fetch-diff))
-          ;; Fetch diff first; render hunk overlays, then fetch comment threads.
           (code-review-minimal--fetch-diff-then
            backend buf iid proj rel-path fetch-comments)
-        ;; No diff support or disabled — fetch comments directly.
-        (progn
-          (funcall fetch-comments))))))
+        (funcall fetch-comments)))))
 
 ;;;; ─── Public Commands ───────────────────────────────────────────────────────
 
@@ -161,6 +156,8 @@ Call `code-review-minimal-finish-review' first"))
       (setq
        code-review-minimal--mr-iid iid
        code-review-minimal--mr-id nil
+       code-review-minimal--mr-source-branch nil
+       code-review-minimal--mr-target-branch nil
        code-review-minimal--project-info projinfo)
       (when backend
         (setq code-review-minimal--current-backend backend)
@@ -183,11 +180,29 @@ Call `code-review-minimal-finish-review' first"))
                            (alist-get 'owner projinfo)
                            (alist-get 'repo projinfo)))
                code-review-minimal--current-backend)
-      (code-review-minimal--checkout-branch-for-review)
-      ;; Enable mode (which refreshes overlays) or just refresh if already on
-      (if (bound-and-true-p code-review-minimal-mode)
-          (code-review-minimal--refresh-overlays)
-        (code-review-minimal-mode 1)))))
+      (let ((proceed
+             (lambda ()
+               (code-review-minimal--checkout-branch-for-review)
+               ;; Enable mode (which refreshes overlays) or just refresh if already on
+               (if (bound-and-true-p code-review-minimal-mode)
+                   (code-review-minimal--refresh-overlays)
+                 (code-review-minimal-mode 1))))
+            (resolve-branches-fn
+             (code-review-minimal--backend-prop
+              code-review-minimal--current-backend :resolve-branches)))
+        ;; Call :resolve-branches first so that branch names are populated in
+        ;; buffer-local state before the checkout prompt is shown.  All
+        ;; built-in backends supply this hook.  Custom backends that omit it
+        ;; fall through to checkout directly.
+        (if resolve-branches-fn
+            (funcall resolve-branches-fn
+                     (lambda (source target)
+                       (when source
+                         (setq code-review-minimal--mr-source-branch source))
+                       (when target
+                         (setq code-review-minimal--mr-target-branch target))
+                       (funcall proceed)))
+          (funcall proceed))))))
 
 ;;;###autoload
 (defun code-review-minimal-finish-review ()
@@ -356,6 +371,8 @@ Commands:
     (setq
      code-review-minimal--mr-iid nil
      code-review-minimal--mr-id nil
+     code-review-minimal--mr-source-branch nil
+     code-review-minimal--mr-target-branch nil
      code-review-minimal--project-info nil
      code-review-minimal--current-backend nil)))
 

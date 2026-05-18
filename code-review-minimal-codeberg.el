@@ -177,6 +177,26 @@ The request is aborted after 30 seconds."
           (setq code-review-minimal--project-info
                 `((owner . ,owner) (repo . ,repo))))))))
 
+(defun code-review-minimal--codeberg-resolve-branches (callback)
+  "Fetch PR source and target branch names, then call CALLBACK with them.
+Calls (funcall CALLBACK SOURCE-BRANCH TARGET-BRANCH), both strings or nil.
+Makes a single lightweight GET to the PR endpoint to retrieve head.ref
+and base.ref.  Does not touch buffer-local branch variables — that is
+the caller's responsibility."
+  (code-review-minimal--codeberg-ensure-project-info)
+  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
+         (repo (alist-get 'repo code-review-minimal--project-info))
+         (pr-number code-review-minimal--mr-iid)
+         (url
+          (code-review-minimal--codeberg-api-url
+           "repos" owner repo "pulls" (number-to-string pr-number))))
+    (code-review-minimal--codeberg-http-request
+     "GET" url nil
+     (lambda (pr)
+       (funcall callback
+                (and pr (alist-get 'ref (alist-get 'head pr)))
+                (and pr (alist-get 'ref (alist-get 'base pr))))))))
+
 (defun code-review-minimal--codeberg-fetch-comments (callback)
   "Fetch PR comments and call CALLBACK with a list of thread plists (Codeberg)."
   (code-review-minimal--codeberg-ensure-project-info)

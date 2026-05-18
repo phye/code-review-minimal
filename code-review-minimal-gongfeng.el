@@ -176,6 +176,31 @@ The request is aborted after 30 seconds to prevent Emacs from hanging on a dead 
 
 ;;;; ─── Gongfeng Backend Functions ────────────────────────────────────────────
 
+(defun code-review-minimal--gongfeng-resolve-branches (callback)
+  "Fetch MR source and target branch names, then call CALLBACK with them.
+Calls (funcall CALLBACK SOURCE-BRANCH TARGET-BRANCH), both strings or nil.
+Makes the same single lightweight MR-metadata GET used by resolve-mr-id.
+Caches the MR global id as a side-effect so subsequent resolve-mr-id
+calls skip the network round-trip.  Does not touch buffer-local branch
+variables — that is the caller's responsibility."
+  (let* ((project-id (code-review-minimal--gongfeng-ensure-project-id))
+         (iid code-review-minimal--mr-iid)
+         (url
+          (code-review-minimal--gongfeng-api-url
+           "projects" project-id "merge_request" "iid"
+           (number-to-string iid)))
+         (buf (current-buffer)))
+    (code-review-minimal--gongfeng-http-request
+     "GET" url nil
+     (lambda (mr)
+       (let ((mr-id (and mr (alist-get 'id mr))))
+         (when (numberp mr-id)
+           (with-current-buffer buf
+             (setq code-review-minimal--mr-id mr-id))))
+       (funcall callback
+                (and mr (alist-get 'source_branch mr))
+                (and mr (alist-get 'target_branch mr)))))))
+
 (defun code-review-minimal--gongfeng-ensure-project-id ()
   "Set project ID from remote for Gongfeng backend."
   (unless (alist-get 'project-id code-review-minimal--project-info)
